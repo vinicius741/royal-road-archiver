@@ -13,3 +13,4 @@ venv/
 # Google Drive API credentials (CRITICAL: NEVER COMMIT THESE)
 credentials.json
 token.json
+my_story_rr/
