@@ -1,16 +1,11 @@
 import os
 import re
 from bs4 import BeautifulSoup, Comment
+import traceback # For more detailed error logging if needed
 
 def _load_and_parse_html(file_path: str) -> BeautifulSoup | None:
     """
     Loads an HTML file and parses it using BeautifulSoup.
-
-    Args:
-        file_path: Path to the HTML file.
-
-    Returns:
-        A BeautifulSoup object or None if an error occurs.
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -28,195 +23,204 @@ def _load_and_parse_html(file_path: str) -> BeautifulSoup | None:
         return None
     except Exception as e:
         print(f"   ERROR: An unexpected error occurred while parsing {file_path}: {e}")
+        # print(traceback.format_exc()) # Uncomment for full traceback if needed
         return None
 
 def _clean_and_extract_text(soup_object: BeautifulSoup, file_path: str) -> str:
     """
     Cleans the HTML content from a BeautifulSoup object, focusing on the chapter content.
-    It removes scripts, styles, comments, and specific unwanted elements.
-
-    Args:
-        soup_object: The BeautifulSoup object of the chapter's HTML page.
-        file_path: Original file path, for logging purposes.
-
-    Returns:
-        A string containing the cleaned HTML of the chapter content,
-        or an empty string if content is not found or an error occurs.
     """
     if not soup_object:
         return "<p>Error: BeautifulSoup object was None.</p>"
 
-    # Locate the main content div
-    # The crawler saves the content within a div that was originally 'chapter-content' from RoyalRoad.
-    # In the saved file, this div is directly under body, after the h1.
-    # Example: <body><h1>Title</h1><div class="chapter-content">...</div></body>
     content_div = soup_object.find('div', class_='chapter-content')
-
     if not content_div:
-        # Fallback: try to find by class 'chapter-inner chapter-content' as per example
-        content_div = soup_object.find('div', class_='chapter-inner chapter-content')
+        content_div = soup_object.find('div', class_='prose') # Another common class
         if not content_div:
-            print(f"   WARNING: Could not find 'div.chapter-content' or 'div.chapter-inner.chapter-content' in {file_path}.")
-            # As a last resort, if the structure is very minimal (e.g. only <p> tags directly in body)
-            # and we know the crawler might put content directly, we might take soup_object.body
-            # However, for now, let's stick to the known structure.
+            # If specific content div isn't found, consider taking the whole body
+            # or a significant portion, but this might include unwanted elements.
+            # For now, stick to known patterns.
+            print(f"   WARNING: Could not find 'div.chapter-content' or 'div.prose' in {file_path}.")
+            # Fallback: use the body if no other main content div is found.
+            # This is a guess and might need adjustment based on raw HTML structure.
+            # body_tag = soup_object.find('body')
+            # if body_tag:
+            #    content_div = body_tag
+            # else:
             return "<p>Conteúdo principal não encontrado no arquivo processado.</p>"
 
-    # Remove unwanted elements from within the content_div
-    # 1. Scripts
+
     for script_tag in content_div.find_all('script'):
         script_tag.decompose()
-
-    # 2. Styles
     for style_tag in content_div.find_all('style'):
         style_tag.decompose()
-
-    # 3. HTML Comments
     for comment in content_div.find_all(string=lambda text: isinstance(text, Comment)):
         comment.extract()
 
-    # 4. Specific unwanted spans (e.g., "Unauthorized tale usage")
-    #    The class name in the example "cmYx..." seems dynamic. Searching by text is more robust.
-    #    The structure is: <span class="..."><br/>TEXT<br/></span>
     unauthorized_text_pattern = re.compile(r'Unauthorized tale usage', re.IGNORECASE)
-    # Find all text nodes containing the pattern
     text_nodes_to_check = content_div.find_all(string=unauthorized_text_pattern)
     for text_node in text_nodes_to_check:
-        # Check if the parent is a span, or a <br> whose parent is a span, etc.
-        # We want to remove the encompassing <span> tag.
         span_parent = text_node.find_parent('span')
         if span_parent:
-            # Additional check to be more specific, if the span only contains this and <br> tags
-            # For now, if the text is found within a span, assume it's the target span.
-            is_target_span = True # Simple assumption
-            # A more complex check could be:
-            # child_tags = [child.name for child in span_parent.children if child.name is not None]
-            # is_target_span = all(tag == 'br' for tag in child_tags) and unauthorized_text_pattern.search(span_parent.get_text(separator=' '))
+            print(f"   INFO: Removing 'Unauthorized tale usage' span from {file_path}")
+            span_parent.decompose()
+            
+    # Remove empty tags that might have been left after decomposition, e.g. empty <p></p>
+    for p_tag in content_div.find_all('p'):
+        if not p_tag.get_text(strip=True) and not p_tag.find_all(True, recursive=False): # No text and no child elements
+            p_tag.decompose()
 
-            if is_target_span:
-                print(f"   INFO: Removing 'Unauthorized tale usage' span from {file_path}")
-                span_parent.decompose()
-
-
-    # Return the HTML string of the cleaned content_div
     return str(content_div)
 
-def process_story_chapters(input_story_folder: str, output_base_folder: str):
+def process_story_chapters(input_story_folder: str, target_output_folder_for_story: str): # PARAMETER RENAMED FOR CLARITY
     """
     Processes all HTML chapter files in a given story folder, cleans them,
-    and saves the cleaned HTML to a corresponding folder in the output_base_folder.
+    and saves the cleaned HTML to the target_output_folder_for_story.
 
     Args:
-        input_story_folder: Path to the folder containing raw HTML chapters of a single story
-                            (e.g., "downloaded_stories/story-slug").
-        output_base_folder: Path to the base folder where processed stories will be saved
-                           (e.g., "processed_stories").
+        input_story_folder: Path to the folder containing raw HTML chapters of a single story.
+        target_output_folder_for_story: Path to the specific folder where processed chapters for this story will be saved.
     """
-    story_name = os.path.basename(os.path.normpath(input_story_folder))
-    processed_story_output_folder = os.path.join(output_base_folder, story_name)
+    # The target_output_folder_for_story is now the exact directory where files should be saved,
+    # NOT a base folder to create a subdirectory in.
+    processed_story_output_folder = target_output_folder_for_story
 
     if not os.path.isdir(input_story_folder):
         print(f"ERROR: Input story folder '{input_story_folder}' not found or is not a directory.")
         return
 
+    # Ensure the direct target output folder exists
     if not os.path.exists(processed_story_output_folder):
         print(f"Creating output folder for processed story: {processed_story_output_folder}")
         os.makedirs(processed_story_output_folder, exist_ok=True)
     else:
         print(f"Using existing output folder for processed story: {processed_story_output_folder}")
 
-    print(f"\nProcessing story: {story_name}")
+    story_name_for_log = os.path.basename(os.path.normpath(input_story_folder)) # Used for logging
+    print(f"\nProcessing story: {story_name_for_log}")
     print(f"Input folder: {input_story_folder}")
-    print(f"Outputting to: {processed_story_output_folder}")
+    print(f"Outputting processed files to: {processed_story_output_folder}") # This should be the correct path
 
     processed_files_count = 0
-    for filename in sorted(os.listdir(input_story_folder)): # Sorted to maintain chapter order
-        if filename.lower().endswith((".html", ".htm")):
-            raw_file_path = os.path.join(input_story_folder, filename)
-            print(f"\nProcessing chapter file: {filename}")
+    raw_chapter_files = sorted([f for f in os.listdir(input_story_folder) if f.lower().endswith((".html", ".htm"))])
 
-            soup = _load_and_parse_html(raw_file_path)
-            if not soup:
-                print(f"   Skipping file {filename} due to loading/parsing error.")
+    if not raw_chapter_files:
+        print(f"No HTML files found in input folder: {input_story_folder}")
+        print("Processing complete (no files to process).")
+        return
+
+    print(f"Found {len(raw_chapter_files)} HTML files to process in {input_story_folder}")
+
+    for filename in raw_chapter_files:
+        raw_file_path = os.path.join(input_story_folder, filename)
+        print(f"\nProcessing chapter file: {filename}")
+
+        soup = _load_and_parse_html(raw_file_path)
+        if not soup:
+            print(f"   Skipping file {filename} due to loading/parsing error or empty content.")
+            continue
+
+        page_title_tag = soup.find('title')
+        h1_title_tag = soup.find('h1') # Processor should aim to have one H1 for chapter title
+        chapter_display_title = filename # Fallback
+        
+        # Prefer H1 from the body content as the chapter title
+        # The crawler saves H1 for the chapter title.
+        body_h1 = None
+        body_content_div = soup.find('div', class_='chapter-content') # As saved by crawler
+        if body_content_div:
+            body_h1 = body_content_div.find('h1')
+        
+        if not body_h1: # Fallback to any H1 in the doc
+            body_h1 = soup.find('h1')
+
+        if body_h1 and body_h1.string:
+            chapter_display_title = body_h1.string.strip()
+        elif h1_title_tag and h1_title_tag.string: # H1 outside chapter-content, or from original <head><h1>
+             chapter_display_title = h1_title_tag.string.strip()
+        elif page_title_tag and page_title_tag.string:
+            # Extract from <title>Tag Content - Story Name</title>
+            chapter_display_title = page_title_tag.string.strip().split(' - ')[0]
+        
+        print(f"   Chapter Title (for processed file): {chapter_display_title}")
+
+        cleaned_html_content = _clean_and_extract_text(soup, raw_file_path)
+
+        if not cleaned_html_content or cleaned_html_content.strip() == "<p>Conteúdo principal não encontrado no arquivo processado.</p>" or cleaned_html_content.strip() == "<p>Error: BeautifulSoup object was None.</p>":
+            print(f"   WARNING: No valid content extracted for {filename}. Output might be minimal or contain error message.")
+            # Optionally, skip saving this file if content is just an error message
+            if "Conteúdo principal não encontrado" in cleaned_html_content or "Error: BeautifulSoup object was None" in cleaned_html_content:
+                print(f"   Skipping save for {filename} due to critical content extraction error.")
                 continue
 
-            # Try to get original title from <h1> or <title> for logging
-            page_title_tag = soup.find('title')
-            h1_title_tag = soup.find('h1')
-            chapter_display_title = filename
-            if h1_title_tag and h1_title_tag.string:
-                chapter_display_title = h1_title_tag.string.strip()
-            elif page_title_tag and page_title_tag.string:
-                chapter_display_title = page_title_tag.string.strip().split(' - ')[0]
+        base, ext = os.path.splitext(filename)
+        cleaned_filename = f"{base}_clean{ext}" # e.g. capitulo_001_title_clean.html
+        cleaned_filepath = os.path.join(processed_story_output_folder, cleaned_filename)
 
-
-            print(f"   Original Title (from HTML): {chapter_display_title}")
-
-            cleaned_html_content = _clean_and_extract_text(soup, raw_file_path)
-
-            if not cleaned_html_content or cleaned_html_content.strip() == "<p>Conteúdo principal não encontrado no arquivo processado.</p>" or cleaned_html_content.strip() == "<p>Error: BeautifulSoup object was None.</p>":
-                print(f"   WARNING: No content extracted or error processing for {filename}. Output might be empty or contain error message.")
-
-
-            # Construct output filename
-            base, ext = os.path.splitext(filename)
-            cleaned_filename = f"{base}_clean{ext}"
-            cleaned_filepath = os.path.join(processed_story_output_folder, cleaned_filename)
-
-            try:
-                # Save the cleaned HTML (which is the content of the .chapter-content div)
-                # For better direct viewing, we can wrap it in a minimal HTML structure,
-                # or save as a fragment. EbookLib might prefer a full HTML doc per chapter.
-                # Let's create a minimal valid HTML5 document for each cleaned chapter.
-                final_html_to_save = f"""<!DOCTYPE html>
-<html lang="en">
+        try:
+            # Create a minimal valid HTML5 document for each cleaned chapter.
+            final_html_to_save = f"""<!DOCTYPE html>
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <title>{chapter_display_title}</title>
     <style>
-        body {{ font-family: sans-serif; margin: 20px; }}
-        .chapter-content {{ max-width: 800px; margin: 0 auto; padding: 1em; border: 1px solid #ddd; }}
-        /* Add any other minimal styles you want for the processed files */
+        body {{ font-family: sans-serif; margin: 20px; line-height: 1.6; }}
+        .chapter-content {{ max-width: 800px; margin: 0 auto; padding: 1em; }}
+        h1 {{ font-size: 1.8em; text-align: center; margin-bottom: 1em; }}
+        p {{ margin-bottom: 1em; text-align: justify; }}
+        img, svg {{ max-width: 100%; height: auto; display: block; margin: 1em auto; }}
     </style>
 </head>
 <body>
     <h1>{chapter_display_title}</h1>
+    <div class="chapter-content">
     {cleaned_html_content}
+    </div>
 </body>
 </html>"""
-                with open(cleaned_filepath, 'w', encoding='utf-8') as f:
-                    f.write(final_html_to_save)
-                print(f"   Cleaned content saved to: {cleaned_filepath}")
-                processed_files_count += 1
-            except IOError as e:
-                print(f"   ERROR: Could not write cleaned file {cleaned_filepath}: {e}")
-            except Exception as e:
-                print(f"   ERROR: An unexpected error occurred while saving {cleaned_filepath}: {e}")
+            with open(cleaned_filepath, 'w', encoding='utf-8') as f:
+                f.write(final_html_to_save)
+            print(f"   Cleaned content saved to: {cleaned_filepath}")
+            processed_files_count += 1
+        except IOError as e:
+            print(f"   ERROR: Could not write cleaned file {cleaned_filepath}: {e}")
+        except Exception as e:
+            print(f"   ERROR: An unexpected error occurred while saving {cleaned_filepath}: {e}")
+            # print(traceback.format_exc()) # Uncomment for full traceback
 
     if processed_files_count > 0:
-        print(f"\nSuccessfully processed {processed_files_count} chapter(s) for story '{story_name}'.")
+        print(f"\nSuccessfully processed {processed_files_count} chapter(s) for story '{story_name_for_log}'.")
     else:
-        print(f"\nNo chapter files were processed for story '{story_name}'. Check input folder and file types.")
+        print(f"\nNo chapter files were actually processed and saved for story '{story_name_for_log}'. Check input folder and file content quality.")
 
     print("Processing complete.")
 
+
 if __name__ == '__main__':
-    # Example usage for testing processor.py directly
-    # Create dummy files similar to what the crawler would produce for this test.
     print("Running direct test for processor.py...")
+    # Ensure dummy paths are relative to where this script might be run or use absolute paths
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir) # Assuming core is one level down from project root
 
-    # Dummy data paths
-    test_input_base = "test_raw_story_data"
-    test_story_slug = "my-sample-story"
+    test_input_base = os.path.join(project_root, "test_raw_story_data_proc")
+    test_story_slug = "my-sample-story-proc"
     test_input_story_folder = os.path.join(test_input_base, test_story_slug)
-    test_output_base = "test_processed_story_data"
 
-    # Create dummy raw chapter file
+    # The second argument should be the *exact* folder where processed files go
+    test_output_specific_folder = os.path.join(project_root, "test_processed_story_data_proc", test_story_slug)
+
+
     if not os.path.exists(test_input_story_folder):
         os.makedirs(test_input_story_folder)
+    # Create dummy output base if it doesn't exist, so test_output_specific_folder can be created by the function
+    if not os.path.exists(os.path.dirname(test_output_specific_folder)):
+         os.makedirs(os.path.dirname(test_output_specific_folder))
+
 
     dummy_chapter_content_from_rr = """
     <div class="chapter-content">
+        <h1>Chapter 1: Test Title from Content</h1>
         <p>This is the first paragraph of the story.</p>
         <script>console.log("This should be removed.");</script>
         <p>This is 文本 with some  моделей non-ASCII characters.</p>
@@ -226,19 +230,15 @@ if __name__ == '__main__':
             <br/>Unauthorized tale usage: if you spot this story on Amazon, report the violation.<br/>
         </span>
         <p>Final paragraph.</p>
-        <div class="hidden-for-some-reason-we-want-to-keep">This div should remain if it's part of content.</div>
     </div>
     """
-    # This is how crawler.py saves it:
     dummy_html_file_content = f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Chapter 1: Test Title</title>
-  <style>body {{ font-family: sans-serif; }}</style>
+  <title>Chapter 1: Test Title in Head</title>
 </head>
 <body>
-<h1>Chapter 1: Test Title</h1>
 {dummy_chapter_content_from_rr}
 </body>
 </html>"""
@@ -248,9 +248,8 @@ if __name__ == '__main__':
         f.write(dummy_html_file_content)
     print(f"Created dummy chapter: {dummy_file_path}")
 
-    # Run the processor
-    process_story_chapters(test_input_story_folder, test_output_base)
+    # Call with the specific output folder
+    process_story_chapters(test_input_story_folder, test_output_specific_folder)
 
-    # You would then inspect the files in "test_processed_story_data/my-sample-story/"
     print("\nProcessor test run finished. Check the output folder.")
-    print(f"Expected output in: {os.path.join(test_output_base, test_story_slug)}")
+    print(f"Expected output in: {test_output_specific_folder}")

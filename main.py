@@ -379,14 +379,17 @@ def full_process_command(
     effective_chapters_per_epub = chapters_per_epub if chapters_per_epub > 0 else 999999
 
     try:
-        build_epubs_for_story(
+        success = build_epubs_for_story(
             input_folder=story_specific_processed_folder, # Pasta específica com HTMLs limpos
             output_folder=abs_epub_base_folder,       # Pasta base para salvar os .epub
             chapters_per_epub=effective_chapters_per_epub,
             author_name=final_author_name,
             story_title=final_story_title
         )
-        typer.secho(f"\nGeração de EPUB bem-sucedida. Arquivos salvos em: {abs_epub_base_folder}", fg=typer.colors.GREEN)
+        if success:
+            typer.secho(f"\nGeração de EPUB bem-sucedida. Arquivos salvos em: {abs_epub_base_folder}", fg=typer.colors.GREEN)
+        else:
+            typer.secho(f"\nGeração de EPUB foi pulada ou falhou. Verifique os logs acima.", fg=typer.colors.YELLOW)
     except Exception as e:
         typer.secho(f"\nOcorreu um erro durante a etapa de construção do EPUB: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
