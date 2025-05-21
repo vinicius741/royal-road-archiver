@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Google Drive API credentials (CRITICAL: NEVER COMMIT THESE)
+credentials.json
+token.json
