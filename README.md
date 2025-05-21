@@ -16,8 +16,37 @@ This is a command-line interface (CLI) tool for downloading stories from Royal R
 2.  **Install Python:**
     Make sure you have Python 3.7+ installed. You can download it from [python.org](https://www.python.org/).
 
-3.  **Install dependencies:**
-    This project uses [Typer](https://typer.tiangolo.com/) for its command-line interface. You'll also need `beautifulsoup4` for HTML processing and `ebooklib` for EPUB creation. You can install them using pip:
+3.  **Set up a Python Virtual Environment (Recommended):**
+    Using a virtual environment is highly recommended to manage project-specific dependencies and avoid conflicts with global Python packages.
+
+    *   **Create the virtual environment:**
+        Navigate to your project directory in the terminal and run the following command. This will create a folder named `.venv` in your project directory.
+
+        For Unix/macOS:
+        ```bash
+        python3 -m venv .venv
+        ```
+        For Windows:
+        ```bash
+        python -m venv .venv
+        ```
+
+    *   **Activate the virtual environment:**
+        Before installing dependencies, you need to activate the virtual environment.
+
+        For Unix/macOS:
+        ```bash
+        source .venv/bin/activate
+        ```
+        For Windows:
+        ```bash
+        .venv\Scripts\activate
+        ```
+        You should see the name of the virtual environment (e.g., `(.venv)`) in your terminal prompt, indicating it's active.
+
+4.  **Install dependencies:**
+    Once the virtual environment is activated, install the necessary packages using pip:
+    This project uses [Typer](https://typer.tiangolo.com/) for its command-line interface. You'll also need `beautifulsoup4` for HTML processing and `ebooklib` for EPUB creation.
 
     ```bash
     pip install typer beautifulsoup4 ebooklib requests
@@ -25,7 +54,7 @@ This is a command-line interface (CLI) tool for downloading stories from Royal R
 
     _(Note: `requests` is used by the crawler, and `lxml` is a good parser for `beautifulsoup4`, so it's good to include them. If there are other specific dependencies revealed by `core` files, they should be added here.)_
 
-    If you encounter any `ModuleNotFoundError` for other packages when running the program, please install them using pip as well.
+    If you encounter any `ModuleNotFoundError` for other packages when running the program, please install them using pip as well (while the virtual environment is active).
 
 ## Commands
 
