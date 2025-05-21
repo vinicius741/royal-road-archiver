@@ -168,10 +168,6 @@ def test():
     """
     typer.echo("CLI 'test' command executed successfully!")
 
-if __name__ == "__main__":
-    app()
-
-
 @app.command(name="full-process")
 def full_process_command(
     first_chapter_url: str = typer.Argument(..., help="The full URL of the first chapter of the story."),
@@ -333,3 +329,4 @@ def full_process_command(
     typer.secho("\n--- Full process completed successfully! ---", fg=typer.colors.CYAN)
 
 if __name__ == "__main__":
+    app()
