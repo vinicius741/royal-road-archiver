@@ -4,7 +4,8 @@ import os
 import traceback # Keep for detailed error reporting in crawl
 
 from core.crawler import download_story
-from core.processor import process_story_chapters # New import
+from core.processor import process_story_chapters
+from core.epub_builder import build_epubs_for_story # New import
 
 app = typer.Typer(help="CLI for downloading and processing stories from Royal Road.", no_args_is_help=True)
 
@@ -92,6 +93,73 @@ def process_story_command(
         typer.echo(traceback.format_exc()) # For more detailed error
         raise typer.Exit(code=1)
 
+@app.command(name="build-epub")
+def build_epub_command(
+    input_processed_folder: str = typer.Argument(..., help="Path to the folder containing the CLEANED HTML chapters of a single story (e.g., processed_stories/story-slug)."),
+    output_epub_folder: str = typer.Option(
+        "epubs",
+        "--out",
+        "-o",
+        help="Base folder where the generated EPUB files will be saved (a subfolder with the story name might be created here if needed)."
+    ),
+    chapters_per_epub: int = typer.Option(
+        50,
+        "--chapters-per-epub",
+        "-c",
+        min=1,
+        help="Number of chapters to include in each EPUB file. Set to 0 or a very large number for a single EPUB."
+    ),
+    author_name: str = typer.Option(
+        "Royal Road Archiver",
+        "--author",
+        "-a",
+        help="Author name to be used in the EPUB metadata."
+    ),
+    story_title: str = typer.Option(
+        "Archived Royal Road Story",
+        "--title",
+        "-t",
+        help="Story title to be used in the EPUB metadata. If not provided, it will attempt to extract from the first chapter file."
+    )
+):
+    """
+    Generates EPUB files from cleaned HTML chapters.
+    """
+    typer.echo(f"Initiating EPUB generation for story files in: {input_processed_folder}")
+
+    abs_input_processed_folder = os.path.abspath(input_processed_folder)
+    abs_output_epub_folder = os.path.abspath(output_epub_folder)
+
+    if not os.path.isdir(abs_input_processed_folder):
+        typer.secho(f"Error: Input processed folder '{abs_input_processed_folder}' not found or is not a directory.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    if not os.path.exists(abs_output_epub_folder):
+        try:
+            os.makedirs(abs_output_epub_folder, exist_ok=True)
+            typer.echo(f"Base output folder for EPUBs created: {abs_output_epub_folder}")
+        except OSError as e:
+            typer.secho(f"Error creating base output folder for EPUBs '{abs_output_epub_folder}': {e}", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+    else:
+        typer.echo(f"Using existing base output folder for EPUBs: {abs_output_epub_folder}")
+
+    try:
+        build_epubs_for_story(
+            input_folder=abs_input_processed_folder,
+            output_folder=abs_output_epub_folder,
+            chapters_per_epub=chapters_per_epub,
+            author_name=author_name,
+            story_title=story_title
+        )
+        typer.secho("\nEPUB generation concluded successfully!", fg=typer.colors.GREEN)
+    except ImportError:
+         typer.secho("Critical Error: Could not import 'build_epubs_for_story' from 'core.epub_builder'. Check file and project structure.", fg=typer.colors.RED)
+         raise typer.Exit(code=1)
+    except Exception as e:
+        typer.secho(f"\nAn error occurred during EPUB generation: {e}", fg=typer.colors.RED)
+        typer.echo(traceback.format_exc())
+        raise typer.Exit(code=1)
 
 @app.command()
 def test():

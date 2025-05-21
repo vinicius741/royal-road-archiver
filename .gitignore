@@ -17,3 +17,4 @@ token.json
 #folder for storing the downloaded stories
 my_story_rr/
 processed_stories/
+epubs/
