@@ -64,37 +64,15 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
     else:
         print(f"Using existing output folder for EPUBs: {output_folder}")
 
-    # --- DEBUGGING ---
-    print(f"DEBUG: Checking for chapter files in input folder: '{input_folder}'")
-    all_files_in_input_folder = []
-    try:
-        all_files_in_input_folder = os.listdir(input_folder)
-        if not all_files_in_input_folder:
-            print(f"DEBUG: os.listdir() found NO files in '{input_folder}'.")
-        else:
-            print(f"DEBUG: os.listdir() found these files/folders in '{input_folder}':")
-            for f_name in all_files_in_input_folder:
-                print(f"  - {f_name}")
-    except Exception as e_list:
-        print(f"DEBUG: Error when trying to os.listdir('{input_folder}'): {e_list}")
-        print("Skipping EPUB generation due to error listing input folder.")
-        return
-    # --- END DEBUGGING ---
-
-    # List and sort chapter files. The processor should be creating "*_clean.html" files.
-    # Let's be a bit more flexible first, then we can make it stricter if needed.
-    chapter_files = sorted([f for f in all_files_in_input_folder if f.lower().endswith((".html", ".htm"))])
+    chapter_files = sorted([f for f in os.listdir(input_folder) if f.lower().endswith((".html", ".htm"))])
 
     if not chapter_files:
         print(f"No HTML chapter files found in '{input_folder}' (after filtering for .html/.htm). Skipping EPUB generation.")
         return
 
     print(f"\nFound {len(chapter_files)} chapter files to process for EPUB creation:")
-    # for cf in chapter_files: # Optional: print which files it thinks are chapters
-    #     print(f"  - {cf}")
 
     effective_story_title = story_title
-    # Fallback for story title if main.py didn't provide a good one (already in your code)
     if story_title == "Archived Royal Road Story" or story_title == "Unknown Story":
         try:
             first_chapter_path_for_title = os.path.join(input_folder, chapter_files[0])
@@ -103,7 +81,6 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
                 h1_title_tag = soup_title.find('h1')
                 if h1_title_tag and h1_title_tag.string:
                     extracted_title = h1_title_tag.string.strip()
-                    # Regex to remove "Chapter X: " or "Capítulo X: " prefixes from H1 tag for a cleaner story title
                     extracted_title = re.sub(r"^(Chapter|Capítulo)\s*\d+\s*[:\-]\s*", "", extracted_title, flags=re.IGNORECASE).strip()
                     if extracted_title:
                         effective_story_title = extracted_title
@@ -113,13 +90,12 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
 
 
     total_chapters = len(chapter_files)
-    effective_chapters_per_epub = chapters_per_epub if chapters_per_epub > 0 else total_chapters # 0 means all in one
-    if total_chapters == 0 : # Should have been caught by 'if not chapter_files'
+    effective_chapters_per_epub = chapters_per_epub if chapters_per_epub > 0 else total_chapters
+    if total_chapters == 0 :
         print("Error: total_chapters is 0, cannot proceed.")
         return
 
     num_epubs = (total_chapters + effective_chapters_per_epub - 1) // effective_chapters_per_epub if effective_chapters_per_epub > 0 else 1
-
 
     print(f"Story will be split into {num_epubs} EPUB(s), with max {effective_chapters_per_epub} chapters per EPUB.")
 
@@ -131,25 +107,36 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
         if not current_batch_files:
             continue
 
-        part_suffix_display = f" (Part {i + 1})" if num_epubs > 1 else ""
-        current_epub_title = f"{effective_story_title}{part_suffix_display}"
+        # Determine chapter numbers for the current batch (1-indexed)
+        first_chapter_number_in_batch = start_index + 1
+        last_chapter_number_in_batch = end_index
 
-        epub_filename_base = _sanitize_id(effective_story_title if effective_story_title and effective_story_title != "Unknown Story" else "story")
-        part_suffix_file = f"_part_{i + 1}" if num_epubs > 1 else ""
-        epub_filename = os.path.join(output_folder, f"{epub_filename_base}{part_suffix_file}.epub")
+        # Update EPUB metadata title to include chapter range
+        current_epub_title_suffix: str
+        if num_epubs > 1:
+            current_epub_title_suffix = f" (Ch {first_chapter_number_in_batch}-{last_chapter_number_in_batch})"
+        elif total_chapters > 0: # Single volume
+             current_epub_title_suffix = f" (Ch 1-{last_chapter_number_in_batch})" # last_chapter_number_in_batch would be total_chapters
+        else: # No chapters, edge case
+            current_epub_title_suffix = ""
+        current_epub_title = f"{effective_story_title}{current_epub_title_suffix}"
 
+        # New EPUB filename generation including chapter numbers
+        filename_chapter_prefix = f"Ch{first_chapter_number_in_batch:03d}-Ch{last_chapter_number_in_batch:03d}"
+        epub_filename_story_part = _sanitize_id(effective_story_title if effective_story_title and effective_story_title != "Unknown Story" else "story")
+        epub_filename = os.path.join(output_folder, f"{filename_chapter_prefix}_{epub_filename_story_part}.epub")
 
         print(f"\n--- Building EPUB: {current_epub_title} ({len(current_batch_files)} chapters) ---")
         print(f"Saving to: {epub_filename}")
 
         book = epub.EpubBook()
-        book.set_identifier(f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_DNS, current_epub_title)}")
+        book.set_identifier(f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_DNS, current_epub_title)}") # Use updated title for UID
         book.set_title(current_epub_title)
         book.add_author(author_name)
         book.set_language('en')
         book.add_metadata('DC', 'publisher', 'Royal Road Archiver')
         book.add_metadata('DC', 'date', datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'), {'id': 'pubdate'})
-        book.add_metadata('DC', 'description', f"Archived from Royal Road - {effective_story_title}{part_suffix_display}")
+        book.add_metadata('DC', 'description', f"Archived from Royal Road - {current_epub_title}")
 
 
         style_content = """
@@ -182,13 +169,12 @@ img, svg { max-width: 100%; height: auto; display: block; margin: 1em auto; bord
             except Exception as e_chap_title:
                 print(f"   WARNING: Could not read H1 title from {chapter_file_name}: {e_chap_title}. Using fallback title.")
 
-            # Chapter UID needs to be unique within this EPUB
             chapter_uid = f"chap_{_sanitize_id(os.path.splitext(chapter_file_name)[0])}_{i}_{chap_idx}"
 
             epub_chapter = _load_chapter_content(full_chapter_path, chapter_display_title_from_h1, chapter_uid)
 
             if epub_chapter:
-                epub_chapter.add_item(default_css) # Link CSS to this chapter
+                epub_chapter.add_item(default_css) 
                 book.add_item(epub_chapter)
                 epub_chapters_for_spine.append(epub_chapter)
                 epub_toc_links.append(epub.Link(href=epub_chapter.file_name, title=chapter_display_title_from_h1, uid=chapter_uid))
@@ -202,14 +188,12 @@ img, svg { max-width: 100%; height: auto; display: block; margin: 1em auto; bord
 
         book.toc = tuple(epub_toc_links)
         book.add_item(epub.EpubNcx())
-        book.add_item(epub.EpubNav()) # This creates the HTML Table of Contents page
+        book.add_item(epub.EpubNav()) 
 
-        # Spine: 'nav' (HTML TOC) first, then all content chapters
         book.spine = ['nav'] + epub_chapters_for_spine
 
         try:
             print(f"   Attempting to write EPUB file: {epub_filename}")
-            # Options for write_epub can sometimes help with compatibility or structure
             epub.write_epub(epub_filename, book, {"epub3_pages": False, "toc_depth": 2})
             print(f"Successfully created EPUB: {epub_filename}")
         except Exception as e_write:
