@@ -1,59 +1,4 @@
-# Royal Road Story Archiver
-
-This is a command-line interface (CLI) tool for downloading stories from Royal Road (royalroad.com), processing their content, and converting them into EPUB format for offline reading.
-
-## Installation
-
-1.  **Clone the repository:**
-
-    ```bash
-    git clone https://github.com/vinicius741/royal-road-archiver.git
-    cd royal-road-archiver
-    ```
-
-
-2.  **Install Python:**
-    Make sure you have Python 3.7+ installed. You can download it from [python.org](https://www.python.org/).
-
-3.  **Set up a Python Virtual Environment (Recommended):**
-    Using a virtual environment is highly recommended to manage project-specific dependencies and avoid conflicts with global Python packages.
-
-    *   **Create the virtual environment:**
-        Navigate to your project directory in the terminal and run the following command. This will create a folder named `.venv` in your project directory.
-
-        For Unix/macOS:
-        ```bash
-        python3 -m venv .venv
-        ```
-        For Windows:
-        ```bash
-        python -m venv .venv
-        ```
-
-    *   **Activate the virtual environment:**
-        Before installing dependencies, you need to activate the virtual environment.
-
-        For Unix/macOS:
-        ```bash
-        source .venv/bin/activate
-        ```
-        For Windows:
-        ```bash
-        .venv\Scripts\activate
-        ```
-        You should see the name of the virtual environment (e.g., `(.venv)`) in your terminal prompt, indicating it's active.
-
-4.  **Install dependencies:**
-    Once the virtual environment is activated, install the necessary packages using pip:
-    This project uses [Typer](https://typer.tiangolo.com/) for its command-line interface. You'll also need `beautifulsoup4` for HTML processing and `ebooklib` for EPUB creation.
-
-    ```bash
-    pip install typer beautifulsoup4 ebooklib requests
-    ```
-
-    _(Note: `requests` is used by the crawler, and `lxml` is a good parser for `beautifulsoup4`, so it's good to include them. If there are other specific dependencies revealed by `core` files, they should be added here.)_
-
-    If you encounter any `ModuleNotFoundError` for other packages when running the program, please install them using pip as well (while the virtual environment is active).
+# README.md (Relevant parts updated)
 
 ## Commands
 
@@ -66,17 +11,22 @@ Here are the available commands:
 Downloads a story from Royal Road chapter by chapter as raw HTML files.
 
 -   **Arguments:**
-    -   `STORY_URL`: (Required) The full URL of the story's overview page OR the first chapter.
+    -   `STORY_URL`: (Required) The full URL of the story's overview page OR a chapter URL. This URL is used for metadata fetching (if overview) and default chapter discovery.
 -   **Options:**
-
     -   `--out TEXT` or `-o TEXT`: Base folder where the raw HTML chapters will be saved. A subfolder with the story name will be created here. (Default: `downloaded_stories`)
-
+    -   `--start-chapter-url TEXT` or `-scu TEXT`: (Optional) The specific URL of the chapter from which to start downloading. If provided, this overrides any chapter found via the main `STORY_URL`.
 -   **Usage Examples:**
     ```bash
-    python main.py crawl "https://www.royalroad.com/fiction/12345/some-story/chapter/123456/chapter-one" -o my_raw_stories
+    # Start from the beginning of a story (overview URL)
+    python main.py crawl "[https://www.royalroad.com/fiction/12345/some-story](https://www.royalroad.com/fiction/12345/some-story)" -o my_raw_stories
     ```
     ```bash
-    python main.py crawl "https://www.royalroad.com/fiction/12345/some-story" -o my_raw_stories
+    # Start from a specific chapter (using main argument)
+    python main.py crawl "[https://www.royalroad.com/fiction/12345/some-story/chapter/123456/chapter-one](https://www.royalroad.com/fiction/12345/some-story/chapter/123456/chapter-one)" -o my_raw_stories
+    ```
+    ```bash
+    # Start from a specific chapter using the dedicated option (useful if STORY_URL is an overview)
+    python main.py crawl "[https://www.royalroad.com/fiction/12345/some-story](https://www.royalroad.com/fiction/12345/some-story)" --start-chapter-url "[https://www.royalroad.com/fiction/12345/some-story/chapter/654321/chapter-ten](https://www.royalroad.com/fiction/12345/some-story/chapter/654321/chapter-ten)" -o my_raw_stories
     ```
 
 ### `process`
@@ -86,9 +36,7 @@ Processes raw HTML chapters of a story: cleans HTML, removes unwanted tags, and 
 -   **Arguments:**
     -   `INPUT_STORY_FOLDER`: (Required) Path to the folder containing the raw HTML chapters of a single story (e.g., `downloaded_stories/some-story`).
 -   **Options:**
-
     -   `--out TEXT` or `-o TEXT`: Base folder where the cleaned HTML chapters will be saved. A subfolder with the story name will be created here. (Default: `processed_stories`)
-
 -   **Usage Example:**
     ```bash
     python main.py process "downloaded_stories/some-story" -o my_cleaned_stories
@@ -101,12 +49,10 @@ Generates EPUB files from cleaned HTML chapters.
 -   **Arguments:**
     -   `INPUT_PROCESSED_FOLDER`: (Required) Path to the folder containing the CLEANED HTML chapters of a single story (e.g., `processed_stories/some-story`).
 -   **Options:**
-
     -   `--out TEXT` or `-o TEXT`: Base folder where the generated EPUB files will be saved. (Default: `epubs`)
     -   `--chapters-per-epub INTEGER` or `-c INTEGER`: Number of chapters to include in each EPUB file. Set to 0 or a very large number for a single EPUB. (Default: `50`)
     -   `--author TEXT` or `-a TEXT`: Author name to be used in the EPUB metadata. (Default: `Royal Road Archiver`)
     -   `--title TEXT` or `-t TEXT`: Story title to be used in the EPUB metadata. If not provided, it will attempt to extract from the first chapter file. (Default: `Archived Royal Road Story`)
-
 -   **Usage Example:**
     ```bash
     python main.py build-epub "processed_stories/some-story" -o my_epubs -c 100 -a "Story Author" -t "My Awesome Story"
@@ -117,19 +63,25 @@ Generates EPUB files from cleaned HTML chapters.
 Performs the full sequence: downloads the story, processes its chapters, and builds EPUB file(s). This is the recommended command for most users.
 
 -   **Arguments:**
-    -   `STORY_URL`: (Required) The full URL of the story's overview page OR the first chapter of the story.
+    -   `STORY_URL`: (Required) The full URL of the story's overview page OR a chapter URL. This URL is primarily used for metadata (if overview) and for deriving the story's slug (for folder naming).
 -   **Options:**
-
+    -   `--start-chapter-url TEXT` or `-scu TEXT`: (Optional) The specific URL of the chapter from which to start downloading. If provided, this overrides any chapter found via the main `STORY_URL` for the crawling process.
     -   `--chapters-per-epub INTEGER` or `-c INTEGER`: Number of chapters to include in each EPUB file. (Default: `50`)
-    -   `--author TEXT` or `-a TEXT`: Author name for EPUB metadata. (Default: `Royal Road Archiver`)
-    -   `--title TEXT` or `-t TEXT`: Story title for EPUB metadata. If not provided, the tool will attempt to infer it. (Default: `Archived Royal Road Story`)
-
+    -   `--author TEXT` or `-a TEXT`: Author name for EPUB metadata. If not provided, the tool will attempt to infer it from the overview page. (Default: `Royal Road Archiver`)
+    -   `--title TEXT` or `-t TEXT`: Story title for EPUB metadata. If not provided, the tool will attempt to infer it from the overview page or slug. (Default: `Archived Royal Road Story`)
 -   **Usage Example:**
     ```bash
-    python main.py full-process "https://www.royalroad.com/fiction/12345/some-story-name"
+    # Download the whole story starting from the beginning
+    python main.py full-process "[https://www.royalroad.com/fiction/12345/some-story-name](https://www.royalroad.com/fiction/12345/some-story-name)"
     ```
     ```bash
-    python main.py full-process "https://www.royalroad.com/fiction/12345/some-story-name/chapter/1234567/some-chapter-name"
+    # Download starting from a specific chapter (e.g., if you stopped midway)
+    # The main story URL is still useful for metadata if it's an overview page.
+    python main.py full-process "[https://www.royalroad.com/fiction/12345/some-story-name](https://www.royalroad.com/fiction/12345/some-story-name)" --start-chapter-url "[https://www.royalroad.com/fiction/12345/some-story-name/chapter/654321/chapter-ten](https://www.royalroad.com/fiction/12345/some-story-name/chapter/654321/chapter-ten)" --title "Some Story Name" --author "Author Name"
+    ```
+    ```bash
+    # If story_url itself is a chapter, and you don't provide --start-chapter-url, it will start from that chapter.
+    python main.py full-process "[https://www.royalroad.com/fiction/12345/some-story-name/chapter/1234567/some-chapter-name](https://www.royalroad.com/fiction/12345/some-story-name/chapter/1234567/some-chapter-name)"
     ```
 
 ### `test`
@@ -145,42 +97,40 @@ A simple test command to ensure the CLI is working. It just prints a success mes
 
 For most users, the `full-process` command is the easiest way to go from a story URL to an EPUB file.
 
-1.  **Find the URL of the story overview page or the first chapter** of the story you want to download from Royal Road.
+1.  **Find the URL of the story.** This can be the story's main overview page or a specific chapter.
 
     -   Story Overview Example: `https://www.royalroad.com/fiction/12345/my-epic-novel`
-    -   First Chapter Example: `https://www.royalroad.com/fiction/12345/my-epic-novel/chapter/000001/the-beginning`
+    -   Chapter Example: `https://www.royalroad.com/fiction/12345/my-epic-novel/chapter/000001/the-beginning`
 
 2.  **Run the `full-process` command:**
     ```bash
     python main.py full-process "YOUR_STORY_URL" --title "My Epic Novel" --author "Author Name" --chapters-per-epub 100
     ```
-    -   Replace `YOUR_STORY_URL` with the actual URL (either overview or first chapter).
+    -   Replace `YOUR_STORY_URL` with the actual URL.
+    -   If you want to start downloading from a specific chapter (e.g., to resume a download or skip initial chapters), use the `--start-chapter-url` option:
+    ```bash
+    python main.py full-process "STORY_OVERVIEW_URL" --start-chapter-url "URL_OF_CHAPTER_TO_START_FROM" --title "My Epic Novel" --author "Author Name"
+    ```
     -   Customize the `--title`, `--author`, and `--chapters-per-epub` as needed.
     -   The tool will create three base folders if they don't exist:
         -   `downloaded_stories/`: For raw HTML.
         -   `processed_stories/`: For cleaned HTML.
         -   `epubs/`: For the final EPUB files.
-            A subfolder named after the story (e.g., `my-epic-novel`) will be created within `downloaded_stories` and `processed_stories`. The EPUB files will be placed directly in the `epubs` folder (or the folder specified with `--out` in the `build-epub` command if used individually).
+            A subfolder named after the story (e.g., `my-epic-novel`) will be created within `downloaded_stories` and `processed_stories`. The EPUB files will be placed directly in the `epubs` folder.
 
-### Advanced Workflow
+## Advanced Workflow
 
 If you need more control over the process, you can use the commands individually:
 
 1.  **`crawl`**: Download the raw HTML chapters.
     ```bash
-    python main.py crawl "YOUR_STORY_URL" -o custom_raw_output
+    python main.py crawl "YOUR_STORY_URL_OR_FIRST_CHAPTER" --start-chapter-url "OPTIONAL_SPECIFIC_START_CHAPTER" -o custom_raw_output
     ```
-    _(Replace `YOUR_STORY_URL` with the story overview or first chapter URL)_
 2.  **`process`**: Clean the downloaded HTML.
     ```bash
     python main.py process "custom_raw_output/story-slug" -o custom_processed_output
     ```
-    _(Replace `story-slug` with the actual folder name created by the crawl command)_
 3.  **`build-epub`**: Create EPUB files from the cleaned HTML.
     ```bash
     python main.py build-epub "custom_processed_output/story-slug" -o custom_epub_output --title "My Custom Title"
     ```
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
