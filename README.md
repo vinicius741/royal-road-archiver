@@ -66,14 +66,17 @@ Here are the available commands:
 Downloads a story from Royal Road chapter by chapter as raw HTML files.
 
 -   **Arguments:**
-    -   `FIRST_CHAPTER_URL`: (Required) The full URL of the first chapter of the story.
+    -   `STORY_URL`: (Required) The full URL of the story's overview page OR the first chapter.
 -   **Options:**
 
     -   `--out TEXT` or `-o TEXT`: Base folder where the raw HTML chapters will be saved. A subfolder with the story name will be created here. (Default: `downloaded_stories`)
 
--   **Usage Example:**
+-   **Usage Examples:**
     ```bash
     python main.py crawl "https://www.royalroad.com/fiction/12345/some-story/chapter/123456/chapter-one" -o my_raw_stories
+    ```
+    ```bash
+    python main.py crawl "https://www.royalroad.com/fiction/12345/some-story" -o my_raw_stories
     ```
 
 ### `process`
@@ -114,7 +117,7 @@ Generates EPUB files from cleaned HTML chapters.
 Performs the full sequence: downloads the story, processes its chapters, and builds EPUB file(s). This is the recommended command for most users.
 
 -   **Arguments:**
-    -   `FIRST_CHAPTER_URL`: (Required) The full URL of the first chapter of the story.
+    -   `STORY_URL`: (Required) The full URL of the story's overview page OR the first chapter of the story.
 -   **Options:**
 
     -   `--chapters-per-epub INTEGER` or `-c INTEGER`: Number of chapters to include in each EPUB file. (Default: `50`)
@@ -124,6 +127,9 @@ Performs the full sequence: downloads the story, processes its chapters, and bui
 -   **Usage Example:**
     ```bash
     python main.py full-process "https://www.royalroad.com/fiction/12345/some-story-name"
+    ```
+    ```bash
+    python main.py full-process "https://www.royalroad.com/fiction/12345/some-story-name/chapter/1234567/some-chapter-name"
     ```
 
 ### `test`
@@ -139,15 +145,16 @@ A simple test command to ensure the CLI is working. It just prints a success mes
 
 For most users, the `full-process` command is the easiest way to go from a story URL to an EPUB file.
 
-1.  **Find the URL of the first chapter** of the story you want to download from Royal Road.
+1.  **Find the URL of the story overview page or the first chapter** of the story you want to download from Royal Road.
 
-    -   Example: `https://www.royalroad.com/fiction/12345/my-epic-novel/chapter/000001/the-beginning`
+    -   Story Overview Example: `https://www.royalroad.com/fiction/12345/my-epic-novel`
+    -   First Chapter Example: `https://www.royalroad.com/fiction/12345/my-epic-novel/chapter/000001/the-beginning`
 
 2.  **Run the `full-process` command:**
     ```bash
-    python main.py full-process "YOUR_STORY_FIRST_CHAPTER_URL" --title "My Epic Novel" --author "Author Name" --chapters-per-epub 100
+    python main.py full-process "YOUR_STORY_URL" --title "My Epic Novel" --author "Author Name" --chapters-per-epub 100
     ```
-    -   Replace `YOUR_STORY_FIRST_CHAPTER_URL` with the actual URL.
+    -   Replace `YOUR_STORY_URL` with the actual URL (either overview or first chapter).
     -   Customize the `--title`, `--author`, and `--chapters-per-epub` as needed.
     -   The tool will create three base folders if they don't exist:
         -   `downloaded_stories/`: For raw HTML.
@@ -161,8 +168,9 @@ If you need more control over the process, you can use the commands individually
 
 1.  **`crawl`**: Download the raw HTML chapters.
     ```bash
-    python main.py crawl "YOUR_STORY_FIRST_CHAPTER_URL" -o custom_raw_output
+    python main.py crawl "YOUR_STORY_URL" -o custom_raw_output
     ```
+    _(Replace `YOUR_STORY_URL` with the story overview or first chapter URL)_
 2.  **`process`**: Clean the downloaded HTML.
     ```bash
     python main.py process "custom_raw_output/story-slug" -o custom_processed_output
