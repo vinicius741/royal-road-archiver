@@ -7,11 +7,10 @@ This is a command-line interface (CLI) tool for downloading stories from Royal R
 1.  **Clone the repository:**
 
     ```bash
-    git clone <repository_url>
-    cd <repository_folder>
+    git clone https://github.com/vinicius741/royal-road-archiver.git
+    cd royal-road-archiver
     ```
 
-    _(Replace `<repository_url>` with the actual URL of this repository and `<repository_folder>` with the name of the cloned directory.)_
 
 2.  **Install Python:**
     Make sure you have Python 3.7+ installed. You can download it from [python.org](https://www.python.org/).
