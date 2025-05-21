@@ -47,7 +47,7 @@ def _clean_and_extract_text(soup_object: BeautifulSoup, file_path: str) -> str:
             # if body_tag:
             #    content_div = body_tag
             # else:
-            return "<p>Conteúdo principal não encontrado no arquivo processado.</p>"
+            return "<p>Main content not found in the processed file.</p>"
 
 
     for script_tag in content_div.find_all('script'):
@@ -146,10 +146,10 @@ def process_story_chapters(input_story_folder: str, target_output_folder_for_sto
 
         cleaned_html_content = _clean_and_extract_text(soup, raw_file_path)
 
-        if not cleaned_html_content or cleaned_html_content.strip() == "<p>Conteúdo principal não encontrado no arquivo processado.</p>" or cleaned_html_content.strip() == "<p>Error: BeautifulSoup object was None.</p>":
+        if not cleaned_html_content or cleaned_html_content.strip() == "<p>Main content not found in the processed file.</p>" or cleaned_html_content.strip() == "<p>Error: BeautifulSoup object was None.</p>":
             print(f"   WARNING: No valid content extracted for {filename}. Output might be minimal or contain error message.")
             # Optionally, skip saving this file if content is just an error message
-            if "Conteúdo principal não encontrado" in cleaned_html_content or "Error: BeautifulSoup object was None" in cleaned_html_content:
+            if "Main content not found" in cleaned_html_content or "Error: BeautifulSoup object was None" in cleaned_html_content: # Updated to check for English error
                 print(f"   Skipping save for {filename} due to critical content extraction error.")
                 continue
 
@@ -160,7 +160,7 @@ def process_story_chapters(input_story_folder: str, target_output_folder_for_sto
         try:
             # Create a minimal valid HTML5 document for each cleaned chapter.
             final_html_to_save = f"""<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>{chapter_display_title}</title>
@@ -243,7 +243,7 @@ if __name__ == '__main__':
 </body>
 </html>"""
 
-    dummy_file_path = os.path.join(test_input_story_folder, "capitulo_001_test_chapter.html")
+    dummy_file_path = os.path.join(test_input_story_folder, "chapter_001_test_chapter.html") # Changed "capitulo" to "chapter"
     with open(dummy_file_path, 'w', encoding='utf-8') as f:
         f.write(dummy_html_file_content)
     print(f"Created dummy chapter: {dummy_file_path}")

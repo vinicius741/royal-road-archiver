@@ -34,7 +34,7 @@ def _load_chapter_content(file_path: str, chapter_title: str, chapter_uid: str) 
             title=chapter_title,
             file_name=f'{_sanitize_id(chapter_uid)}.xhtml', # Use .xhtml extension
             uid=chapter_uid,
-            lang='pt-BR' # Assuming Portuguese, can be parameterized
+            lang='en' # Assuming the content is in English, can be parameterized
         )
         chapter_item.content = html_content
         return chapter_item
@@ -103,6 +103,7 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
                 h1_title_tag = soup_title.find('h1')
                 if h1_title_tag and h1_title_tag.string:
                     extracted_title = h1_title_tag.string.strip()
+                    # Regex to remove "Chapter X: " or "Capítulo X: " prefixes from H1 tag for a cleaner story title
                     extracted_title = re.sub(r"^(Chapter|Capítulo)\s*\d+\s*[:\-]\s*", "", extracted_title, flags=re.IGNORECASE).strip()
                     if extracted_title:
                         effective_story_title = extracted_title
@@ -130,7 +131,7 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
         if not current_batch_files:
             continue
 
-        part_suffix_display = f" (Parte {i + 1})" if num_epubs > 1 else ""
+        part_suffix_display = f" (Part {i + 1})" if num_epubs > 1 else ""
         current_epub_title = f"{effective_story_title}{part_suffix_display}"
 
         epub_filename_base = _sanitize_id(effective_story_title if effective_story_title and effective_story_title != "Unknown Story" else "story")
@@ -145,10 +146,10 @@ def build_epubs_for_story(input_folder: str, output_folder: str, chapters_per_ep
         book.set_identifier(f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_DNS, current_epub_title)}")
         book.set_title(current_epub_title)
         book.add_author(author_name)
-        book.set_language('pt-BR')
+        book.set_language('en')
         book.add_metadata('DC', 'publisher', 'Royal Road Archiver')
         book.add_metadata('DC', 'date', datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'), {'id': 'pubdate'})
-        book.add_metadata('DC', 'description', f"Arquivado de Royal Road - {effective_story_title}{part_suffix_display}")
+        book.add_metadata('DC', 'description', f"Archived from Royal Road - {effective_story_title}{part_suffix_display}")
 
 
         style_content = """
@@ -171,7 +172,7 @@ img, svg { max-width: 100%; height: auto; display: block; margin: 1em auto; bord
         for chap_idx, chapter_file_name in enumerate(current_batch_files):
             full_chapter_path = os.path.join(input_folder, chapter_file_name)
             
-            chapter_display_title_from_h1 = f"Capítulo {start_index + chap_idx + 1}" # Fallback
+            chapter_display_title_from_h1 = f"Chapter {start_index + chap_idx + 1}" # Fallback
             try:
                 with open(full_chapter_path, 'r', encoding='utf-8') as f_chap:
                     chap_soup = BeautifulSoup(f_chap.read(), 'html.parser')
