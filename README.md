@@ -44,17 +44,20 @@ It's highly recommended to use a virtual environment to manage project dependenc
 
 3.  **Activate the virtual environment:**
 
-        -   **On Windows:**
-            ```bash
-            .\.venv\Scripts\activate
-            ```
-        -   **On macOS and Linux:**
-            ```bash
-            source .venv/bin/activate
-            ```
-            Your terminal prompt should change to indicate that the virtual environment is active (e.g.,`(.venv) your-prompt$`).
+    **On Windows:**
+   
+    ```bash
+    .\.venv\Scripts\activate
+    ```
+    **On macOS and Linux:**
+    
+    ```bash
+    source .venv/bin/activate
+    ```
+    
+    Your terminal prompt should change to indicate that the virtual environment is active (e.g.,`(.venv) your-prompt$`).
 
-4.  **Install dependencies:**
+5.  **Install dependencies:**
 
     Install these dependencies by running:
 
