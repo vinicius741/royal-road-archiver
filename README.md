@@ -111,10 +111,12 @@ python main.py <command> --help
 
 -   **`full-process`**: Performs the entire sequence: download, process, and build EPUB.
     ```bash
-    python main.py full-process <STORY_URL_OR_CHAPTER_URL> --start-chapter-url <SPECIFIC_CHAPTER_URL_TO_START_FROM> -c <CHAPTERS_PER_EPUB> --author "<AUTHOR_NAME>" --title "<STORY_TITLE>"
+    python main.py full-process <STORY_URL_OR_CHAPTER_URL> --start-chapter-url <SPECIFIC_CHAPTER_URL_TO_START_FROM> -c <CHAPTERS_PER_EPUB> --author "<AUTHOR_NAME>" --title "<STORY_TITLE>" --keep-intermediate-files
     ```
     -   This command combines the functionality of `crawl`, `process`, and `build-epub`.
     -   It uses default base folders: `downloaded_stories`, `processed_stories`, and `epubs`.
+    -   **Cleanup**: By default, after successfully generating the EPUB(s), the intermediate folders (`downloaded_stories/story-slug` and `processed_stories/story-slug`) are automatically deleted to save space.
+    -   `--keep-intermediate-files`: (Optional) Add this flag if you want to preserve the downloaded (raw HTML) and processed (cleaned HTML) chapter folders. This can be useful for debugging or if you want to re-process or re-build EPUBs with different settings without re-downloading.
 
 ### Examples:
 

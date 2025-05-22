@@ -1,5 +1,6 @@
 import typer
 import os
+import shutil
 import traceback
 
 from core.crawler import download_story # fetch_story_metadata_and_first_chapter is now used by cli_helpers
@@ -212,6 +213,11 @@ def full_process_command(
         "--title",
         "-t",
         help="Story title for EPUB. Overrides fetched metadata."
+    ),
+    keep_intermediate_files: bool = typer.Option(
+        False,
+        "--keep-intermediate-files",
+        help="If True, preserves the downloaded and processed chapter folders. Defaults to False (deleting them)."
     )
 ):
     """
@@ -302,6 +308,29 @@ def full_process_command(
         typer.secho(f"An error occurred during the EPUB building step: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
         raise typer.Exit(code=1)
+
+    # --- 4. Cleanup Step ---
+    if not keep_intermediate_files:
+        typer.echo("\n--- Step 4: Cleaning up intermediate files ---")
+        try:
+            if os.path.exists(story_specific_download_folder):
+                shutil.rmtree(story_specific_download_folder)
+                typer.echo(f"Successfully deleted raw download folder: {story_specific_download_folder}")
+            else:
+                typer.echo(f"Raw download folder not found (already deleted or never created): {story_specific_download_folder}")
+
+            if os.path.exists(story_specific_processed_folder):
+                shutil.rmtree(story_specific_processed_folder)
+                typer.echo(f"Successfully deleted processed content folder: {story_specific_processed_folder}")
+            else:
+                typer.echo(f"Processed content folder not found (already deleted or never created): {story_specific_processed_folder}")
+        except OSError as e:
+            typer.secho(f"Error during cleanup of intermediate folders: {e}", fg=typer.colors.RED)
+            typer.echo(f"Please manually check and remove if necessary:\n- {story_specific_download_folder}\n- {story_specific_processed_folder}")
+    else:
+        typer.echo("\n--- Step 4: Skipping cleanup of intermediate files as per --keep-intermediate-files option. ---")
+        typer.echo(f"Raw download folder retained at: {story_specific_download_folder}")
+        typer.echo(f"Processed content folder retained at: {story_specific_processed_folder}")
 
     typer.secho("\n--- Full process completed! ---", fg=typer.colors.CYAN)
 
