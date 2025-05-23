@@ -168,18 +168,22 @@ def build_epub_command(
         typer.secho(f"Error: Input processed folder '{abs_input_processed_folder}' not found or is not a directory.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
     
+    story_slug = os.path.basename(os.path.normpath(abs_input_processed_folder))
+    story_specific_output_folder = os.path.join(abs_output_epub_folder, story_slug)
+    _ensure_base_folder(story_specific_output_folder)
+    
     # chapters_per_epub=0 means all in one for build_epubs_for_story
     # The epub_builder handles the logic of '0 means all chapters' effectively.
 
     try:
         build_epubs_for_story(
             input_folder=abs_input_processed_folder, 
-            output_folder=abs_output_epub_folder,   
+            output_folder=story_specific_output_folder,   
             chapters_per_epub=chapters_per_epub, # Pass directly
             author_name=author_name,
             story_title=story_title 
         )
-        typer.secho(f"\nEPUB generation concluded successfully! Files in {abs_output_epub_folder}", fg=typer.colors.GREEN)
+        typer.secho(f"\nEPUB generation concluded successfully! Files in {story_specific_output_folder}", fg=typer.colors.GREEN)
     except Exception as e:
         typer.secho(f"\nAn error occurred during EPUB generation: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
@@ -295,15 +299,17 @@ def full_process_command(
 
     # --- 3. Build EPUB Step ---
     typer.echo(f"\n--- Step 3: Building EPUB(s) from {story_specific_processed_folder} ---")
+    story_specific_epub_output_folder = os.path.join(abs_epub_base_folder, story_slug_for_folders)
+    _ensure_base_folder(story_specific_epub_output_folder)
     try:
         build_epubs_for_story(
             input_folder=story_specific_processed_folder,
-            output_folder=abs_epub_base_folder,  
+            output_folder=story_specific_epub_output_folder,  
             chapters_per_epub=chapters_per_epub, # Pass directly
             author_name=final_author_name,
             story_title=final_story_title
         )
-        typer.secho(f"EPUB generation process finished. Files should be in: {abs_epub_base_folder}", fg=typer.colors.GREEN)
+        typer.secho(f"EPUB generation process finished. Files should be in: {story_specific_epub_output_folder}", fg=typer.colors.GREEN)
     except Exception as e:
         typer.secho(f"An error occurred during the EPUB building step: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
