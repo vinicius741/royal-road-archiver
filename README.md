@@ -11,6 +11,7 @@ A command-line tool to download stories from Royal Road, process them into clean
 -   **Build EPUBs**: Convert the cleaned HTML chapters into well-formatted EPUB files, with options to split into multiple volumes.
 -   **Metadata Handling**: Fetch and utilize story metadata like title, author, and slug for organizing files and EPUBs.
 -   **Flexible Workflow**: Use individual commands for crawling, processing, and building EPUBs, or run a full end-to-end process with a single command.
+-   **Graphical User Interface**: An optional GUI to manage the full archiving process.
 
 ---
 
@@ -21,6 +22,7 @@ Follow these steps to set up your Python environment and install the necessary d
 ### Prerequisites
 
 -   **Python 3.x**: This project is written in Python. It's recommended to use Python 3.7 or newer. You can download Python from [python.org](https://www.python.org/).
+-   **Tkinter (for GUI)**: For the GUI, Tkinter is required. It's usually included with standard Python installations on Windows and macOS. On Linux, it might need to be installed separately (e.g., `sudo apt-get install python3-tk`).
 
 ### Environment Setup & Dependencies
 
@@ -121,6 +123,12 @@ python main.py <command> --help
     -   **Cleanup**: By default, after successfully generating the EPUB(s), the intermediate folders (`downloaded_stories/story-slug` and `processed_stories/story-slug`) are automatically deleted to save space.
     -   `--keep-intermediate-files`: (Optional) Add this flag if you want to preserve the downloaded (raw HTML) and processed (cleaned HTML) chapter folders. This can be useful for debugging or if you want to re-process or re-build EPUBs with different settings without re-downloading.
 
+-   **`gui`**: Launches a Graphical User Interface (GUI) to run the full process.
+    ```bash
+    python main.py gui
+    ```
+    See the "Graphical User Interface (GUI)" section below for more details.
+
 ### Examples:
 
 1.  **Full process for a story from its overview page:**
@@ -146,11 +154,39 @@ python main.py <command> --help
     python main.py build-epub processed_stories/my-awesome-story -c 0 --title "My Awesome Story - Full"
     ```
 
+### Graphical User Interface (GUI) 🖼️
+
+For users who prefer a graphical interface, the archiver provides a GUI to run the full download and EPUB generation process.
+
+**How to Launch:**
+
+Ensure you have completed the setup steps (including Tkinter for GUI) and activated your virtual environment. Then, run:
+
+```bash
+python main.py gui
+```
+
+This will open a window where you can input the story details.
+
+**Features:**
+
+-   **Story URL**: The mandatory URL for the story's main page or a specific chapter.
+-   **Start Chapter URL**: (Optional) If you want to begin downloading from a specific chapter different from the story's first chapter.
+-   **Chapters per EPUB**: (Optional) Number of chapters to include in each EPUB file (e.g., 50). Use 0 to create a single EPUB for the entire story. Defaults to 50.
+-   **Author Name**: (Optional) Specify the author's name for the EPUB metadata. If left blank, the tool will attempt to fetch it from the story page.
+-   **Story Title**: (Optional) Specify the story's title for the EPUB metadata. If left blank, the tool will attempt to fetch it.
+-   **Keep Intermediate Files**: (Checkbox, optional) If checked, the raw downloaded chapters and cleaned HTML chapters will be kept after the EPUB is generated. By default, these are deleted.
+-   **Run Full Process Button**: Starts the archiving process.
+-   **Feedback Area**: Displays progress messages and any errors encountered during the process.
+
+**Note:** The GUI requires a desktop environment with Tkinter support (which is usually included with standard Python installations on Windows, macOS, and many Linux distributions). If Tkinter is not available, the command will print an error message.
+
 ---
 
 ## Folder Structure 📂
 
 -   **`core/`**: Contains the core logic for crawling, processing, and EPUB building.
+-   **`gui.py`**: The script for the Tkinter Graphical User Interface.
 -   **`tests/`**: Contains unit and integration tests for the application.
 -   **`main.py`**: The main script for the command-line interface.
 -   **`.vscode/`**: (Optional) Contains VS Code specific settings, like `python.analysis.extraPaths` which can help with intellisense for the `core` module.

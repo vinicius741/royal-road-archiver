@@ -1,45 +1,53 @@
 import random
 import requests
 from bs4 import BeautifulSoup
+from typing import Optional, Callable # For LoggerCallback
 import os
 import time
 import re # To clean filenames
 from urllib.parse import urljoin # To build absolute URLs
+
+# Define LoggerCallback type alias, similar to main.py
+LoggerCallback = Optional[Callable[[str, Optional[str]], None]]
 
 # Header to simulate a browser and avoid simple blocks
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
-def _download_page_html(page_url: str) -> requests.Response | None:
+def _download_page_html(page_url: str, logger_callback: LoggerCallback = None) -> requests.Response | None:
     """
     Downloads the HTML content of a URL.
     Returns the request's response object or None in case of error.
     """
-    print(f"   Trying to download: {page_url}")
+    log = lambda msg, style=None: logger_callback(msg, style) if logger_callback else print(msg)
+    
+    log(f"   Trying to download: {page_url}")
     try:
         response = requests.get(page_url, headers=HEADERS, timeout=15) # 15s timeout
         response.raise_for_status()  # Raises an error for 4xx/5xx HTTP codes
         return response
     except requests.exceptions.HTTPError as http_err:
-        print(f"   HTTP error downloading {page_url}: {http_err}")
+        log(f"   HTTP error downloading {page_url}: {http_err}", "red")
     except requests.exceptions.ConnectionError as conn_err:
-        print(f"   Connection error downloading {page_url}: {conn_err}")
+        log(f"   Connection error downloading {page_url}: {conn_err}", "red")
     except requests.exceptions.Timeout as timeout_err:
-        print(f"   Timeout downloading {page_url}: {timeout_err}")
+        log(f"   Timeout downloading {page_url}: {timeout_err}", "red")
     except requests.exceptions.RequestException as req_err:
-        print(f"   General error downloading {page_url}: {req_err}")
+        log(f"   General error downloading {page_url}: {req_err}", "red")
     return None
 
-def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
+def fetch_story_metadata_and_first_chapter(overview_url: str, logger_callback: LoggerCallback = None) -> dict | None:
     """
     Fetches story metadata (title, author, first chapter URL)
     from the story overview page.
     """
-    print(f"Fetching metadata from overview page: {overview_url}")
-    response = _download_page_html(overview_url)
+    log = lambda msg, style=None: logger_callback(msg, style) if logger_callback else print(msg)
+
+    log(f"Fetching metadata from overview page: {overview_url}")
+    response = _download_page_html(overview_url, logger_callback)
     if not response:
-        print("   Failed to download the overview page.")
+        log("   Failed to download the overview page.", "red")
         return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -50,52 +58,40 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
         'story_slug': None
     }
 
-    # Extrair URL do primeiro capítulo
-    # Look for the "Start Reading" button or similar that leads to the first chapter
-    # <a href="/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed/chapter/2251704/b1-chapter-1" class="btn btn-lg btn-primary">
     start_reading_link = soup.select_one('a.btn.btn-primary[href*="/chapter/"]')
     if start_reading_link and start_reading_link.get('href'):
         relative_url = start_reading_link['href']
         metadata['first_chapter_url'] = urljoin(overview_url, relative_url)
-        print(f"   First chapter URL found: {metadata['first_chapter_url']}")
+        log(f"   First chapter URL found: {metadata['first_chapter_url']}")
     else:
-        print("   WARNING: First chapter URL not found on overview page.")
-        # Tries to find in the chapter table if the button doesn't exist
+        log("   WARNING: First chapter URL not found on overview page.", "yellow")
         first_chapter_row_link = soup.select_one('table#chapters tbody tr[data-url] a')
         if first_chapter_row_link and first_chapter_row_link.get('href'):
             relative_url = first_chapter_row_link['href']
             metadata['first_chapter_url'] = urljoin(overview_url, relative_url)
-            print(f"   First chapter URL (table fallback) found: {metadata['first_chapter_url']}")
+            log(f"   First chapter URL (table fallback) found: {metadata['first_chapter_url']}")
         else:
-            print("   CRITICAL ERROR: Could not find the first chapter URL.")
-            return None # Essential to continue
+            log("   CRITICAL ERROR: Could not find the first chapter URL.", "red")
+            return None
 
-    # Extrair título da história
-    # <h1 class="font-white">Pioneer of the Abyss: An Underwater Livestreamed Isekai LitRPG</h1>
     title_tag = soup.select_one('div.fic-title h1.font-white')
     if title_tag:
         metadata['story_title'] = title_tag.text.strip()
-        print(f"   Story title found: {metadata['story_title']}")
+        log(f"   Story title found: {metadata['story_title']}")
     else:
-        # Fallback to the page's <title> tag
         page_title_tag = soup.find('title')
         if page_title_tag:
-            # Ex: "Pioneer of the Abyss: An Underwater Livestreamed Isekai LitRPG | Royal Road"
             full_title = page_title_tag.text.strip()
-            metadata['story_title'] = full_title.split('|')[0].strip() # Takes the part before the pipe
-            print(f"   Story title (title tag fallback) found: {metadata['story_title']}")
+            metadata['story_title'] = full_title.split('|')[0].strip()
+            log(f"   Story title (title tag fallback) found: {metadata['story_title']}")
         else:
-            print("   WARNING: Story title not found.")
+            log("   WARNING: Story title not found.", "yellow")
 
-
-    # Extrair nome do autor
-    # <span><a href="/profile/102324" class="font-white">WolfShine</a></span>
     author_link = soup.select_one('div.fic-title h4 span a[href*="/profile/"]')
     if author_link:
         metadata['author_name'] = author_link.text.strip()
-        print(f"   Author name found: {metadata['author_name']}")
+        log(f"   Author name found: {metadata['author_name']}")
     else:
-        # Fallback: Try to find in the JSON LD schema
         script_tag = soup.find('script', type='application/ld+json')
         if script_tag:
             try:
@@ -103,66 +99,57 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
                 json_data = json.loads(script_tag.string)
                 if json_data.get('author') and json_data['author'].get('name'):
                     metadata['author_name'] = json_data['author']['name'].strip()
-                    print(f"   Author name (JSON-LD fallback) found: {metadata['author_name']}")
+                    log(f"   Author name (JSON-LD fallback) found: {metadata['author_name']}")
             except Exception as e:
-                print(f"   WARNING: Error parsing JSON-LD for author name: {e}")
-        if metadata['author_name'] == "Unknown Author": # If still not found
-            print("   WARNING: Author name not found.")
+                log(f"   WARNING: Error parsing JSON-LD for author name: {e}", "yellow")
+        if metadata['author_name'] == "Unknown Author":
+            log("   WARNING: Author name not found.", "yellow")
 
-
-    # Extract story slug from the first chapter URL (more reliable)
     if metadata['first_chapter_url']:
         try:
-            # Ex: https://www.royalroad.com/fiction/12345/some-story/chapter/123456/chapter-one
-            # We want "some-story"
             parts = metadata['first_chapter_url'].split('/fiction/')
             if len(parts) > 1:
                 slug_part = parts[1].split('/')
                 if len(slug_part) > 1:
-                     metadata['story_slug'] = _sanitize_filename(slug_part[1]) # slug_part[0] is the fiction ID
-                     print(f"   Story slug (from chapter URL) found: {metadata['story_slug']}")
+                     metadata['story_slug'] = _sanitize_filename(slug_part[1])
+                     log(f"   Story slug (from chapter URL) found: {metadata['story_slug']}")
         except IndexError:
-            pass # Leaves slug as None if extraction fails
+            pass
 
-    if not metadata['story_slug']: # Fallback to the overview URL
+    if not metadata['story_slug']:
         try:
             parts = overview_url.split('/fiction/')
             if len(parts) > 1:
                 slug_part = parts[1].split('/')
-                if len(slug_part) > 1: # /fiction/ID/slug/...
+                if len(slug_part) > 1:
                     metadata['story_slug'] = _sanitize_filename(slug_part[1])
-                    print(f"   Story slug (from overview URL) found: {metadata['story_slug']}")
-                elif len(slug_part) == 1 and slug_part[0]: # /fiction/ID (if there's no slug in the URL)
-                    # In this case, the title can be a good alternative for the folder name
+                    log(f"   Story slug (from overview URL) found: {metadata['story_slug']}")
+                elif len(slug_part) == 1 and slug_part[0]:
                     metadata['story_slug'] = _sanitize_filename(metadata['story_title'])
-                    print(f"   Story slug (title fallback) used: {metadata['story_slug']}")
-
+                    log(f"   Story slug (title fallback) used: {metadata['story_slug']}")
         except IndexError:
-            print("   WARNING: Could not extract story slug from overview URL. Using title.")
+            log("   WARNING: Could not extract story slug from overview URL. Using title.", "yellow")
             metadata['story_slug'] = _sanitize_filename(metadata['story_title'])
 
     if not metadata['story_slug'] or metadata['story_slug'] == "unknown-title":
-        # Last resort, use a generic name if everything fails
         timestamp_slug = f"story_{int(time.time())}"
-        print(f"   WARNING: Story slug could not be determined, using generic slug: {timestamp_slug}")
+        log(f"   WARNING: Story slug could not be determined, using generic slug: {timestamp_slug}", "yellow")
         metadata['story_slug'] = timestamp_slug
-
 
     return metadata
 
-
-def _download_chapter_html(chapter_url: str) -> requests.Response | None:
+def _download_chapter_html(chapter_url: str, logger_callback: LoggerCallback = None) -> requests.Response | None:
     """
     Downloads the HTML content of a chapter URL.
     Returns the request's response object or None in case of error.
     """
-    return _download_page_html(chapter_url) # Reuses the generic function
+    return _download_page_html(chapter_url, logger_callback)
 
-# ... (rest of _parse_chapter_html, _sanitize_filename remain the same)
-def _parse_chapter_html(html_content: str, current_page_url: str) -> dict:
+def _parse_chapter_html(html_content: str, current_page_url: str, logger_callback: LoggerCallback = None) -> dict:
     """
     Parses the raw HTML of a chapter and extracts title, content, and next chapter URL.
     """
+    log = lambda msg, style=None: logger_callback(msg, style) if logger_callback else print(msg) # Not used here but good practice
     soup = BeautifulSoup(html_content, 'html.parser')
 
     # Título do Capítulo
@@ -259,90 +246,67 @@ def _sanitize_filename(filename: str) -> str:
     return sanitized[:100] # Keeps the first 100 characters
 
 
-def download_story(first_chapter_url: str, output_folder: str, story_slug_override: str = None):
+def download_story(first_chapter_url: str, output_folder: str, story_slug_override: str = None, logger_callback: LoggerCallback = None):
     """
     Downloads all chapters of a Royal Road story, starting from the first chapter URL.
     """
-    story_output_folder = output_folder # By default, saves directly to the provided output folder
-                                        # which should already be the story-specific folder.
+    log = lambda msg, style=None: logger_callback(msg, style) if logger_callback else print(msg)
 
     if story_slug_override:
         story_specific_folder_name = _sanitize_filename(story_slug_override)
     else:
-        # Tries to extract the slug from the URL if not provided
         try:
             story_specific_folder_name = first_chapter_url.split('/fiction/')[1].split('/')[1]
             story_specific_folder_name = _sanitize_filename(story_specific_folder_name)
         except IndexError:
-            # If extraction fails, uses a generic time-based name for the subfolder
             story_specific_folder_name = f"story_{int(time.time())}"
-            print(f"Could not extract story name from URL, using generic slug for folder: {story_specific_folder_name}")
-
-    # The 'output_folder' passed to download_story should already be the base
-    # where the story folder (story_specific_folder_name) will be created or used.
-    # Ex: output_folder = "downloaded_stories"
-    #     story_output_folder_final = "downloaded_stories/my-story-slug"
+            log(f"Could not extract story name from URL, using generic slug for folder: {story_specific_folder_name}", "yellow")
 
     story_output_folder_final = os.path.join(output_folder, story_specific_folder_name)
 
     if not os.path.exists(story_output_folder_final):
-        print(f"Creating output folder for chapters: {story_output_folder_final}")
+        log(f"Creating output folder for chapters: {story_output_folder_final}")
         os.makedirs(story_output_folder_final, exist_ok=True)
     else:
-        print(f"Using existing output folder for chapters: {story_output_folder_final}")
-
+        log(f"Using existing output folder for chapters: {story_output_folder_final}")
 
     current_chapter_url = first_chapter_url
     chapter_number = 1
 
     while current_chapter_url:
-        print(f"\nDownloading chapter {chapter_number}...")
+        log(f"\nDownloading chapter {chapter_number}...")
 
-        response = _download_chapter_html(current_chapter_url)
+        response = _download_chapter_html(current_chapter_url, logger_callback)
         if not response:
-            print(f"Failed to download chapter {chapter_number} from {current_chapter_url}.")
-            # Decide whether to stop or try to skip. For now, we stop.
+            log(f"Failed to download chapter {chapter_number} from {current_chapter_url}.", "red")
             break
 
-        # Adds a simple check to make sure the content is HTML
         content_type = response.headers.get('content-type', '').lower()
         if 'text/html' not in content_type:
-            print(f"   WARNING: Content downloaded from {current_chapter_url} does not appear to be HTML (Content-Type: {content_type}). Attempting to process anyway.")
-            # Could be an error or a file (e.g., image) linked as the next chapter.
-            # If it's a common error (e.g., page not found that didn't return 404),
-            # parse_chapter_html might fail gracefully.
+            log(f"   WARNING: Content downloaded from {current_chapter_url} does not appear to be HTML (Content-Type: {content_type}). Attempting to process anyway.", "yellow")
 
-        chapter_data = _parse_chapter_html(response.text, current_chapter_url)
+        chapter_data = _parse_chapter_html(response.text, current_chapter_url, logger_callback)
 
         title = chapter_data['title']
         content_html = chapter_data['content_html']
         next_url = chapter_data['next_chapter_url']
 
-        # If the title is "Unknown Title" and the chapter number is 1,
-        # try using the story slug name as a more descriptive title.
         if title == "Unknown Title" and chapter_number == 1 and story_slug_override:
             title = story_slug_override.replace('-', ' ').title() + " - Chapter 1"
 
-
-        print(f"   Chapter Title: {title}")
+        log(f"   Chapter Title: {title}")
         if not next_url:
-            print("   Next chapter link not found on this page.")
+            log("   Next chapter link not found on this page.")
 
-
-        # Sanitize the title to use as part of the filename
         safe_title = _sanitize_filename(title if title else f"chapter_{chapter_number:03d}")
-        # Ensures the filename is not excessively long and has a number.
         filename_base = f"chapter_{chapter_number:03d}_{safe_title}"
-        filename = f"{filename_base[:150]}.html" # Also limits the total filename length
-
+        filename = f"{filename_base[:150]}.html"
         filepath = os.path.join(story_output_folder_final, filename)
 
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
-                # Writes a basic HTML structure for the chapter
                 f.write("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
                 f.write(f"  <meta charset=\"UTF-8\">\n  <title>{title if title else 'Chapter ' + str(chapter_number)}</title>\n")
-                # Adds simple CSS for better readability if opened directly
                 f.write("  <style>\n")
                 f.write("    body { font-family: sans-serif; margin: 20px; line-height: 1.6; }\n")
                 f.write("    .chapter-content { max-width: 800px; margin: 0 auto; padding: 1em; }\n")
@@ -351,62 +315,62 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
                 f.write("  </style>\n")
                 f.write("</head>\n<body>\n")
                 f.write(f"<h1>{title if title else 'Chapter ' + str(chapter_number)}</h1>\n")
-                f.write(content_html) # content_html is already an HTML string
+                f.write(content_html)
                 f.write("\n</body>\n</html>")
-            print(f"   Saved to: {filepath}")
+            log(f"   Saved to: {filepath}")
         except IOError as e:
-            print(f"   ERROR saving file {filepath}: {e}")
-            # Decide whether to stop or continue to the next chapter
-            # For now, let's continue
+            log(f"   ERROR saving file {filepath}: {e}", "red")
         except Exception as ex:
-            print(f"   UNEXPECTED ERROR saving file {filepath}: {ex}")
-
+            log(f"   UNEXPECTED ERROR saving file {filepath}: {ex}", "red")
 
         current_chapter_url = next_url
 
         if not current_chapter_url:
-            print("\nEnd of story reached (next chapter not found or invalid URL).")
+            log("\nEnd of story reached (next chapter not found or invalid URL).")
             break
 
-        # Checks if the next chapter URL is the same as the current one to avoid infinite loops
         if current_chapter_url == response.url:
-            print(f"\nWARNING: Next chapter URL ({current_chapter_url}) is the same as the current page. Stopping to avoid loop.")
+            log(f"\nWARNING: Next chapter URL ({current_chapter_url}) is the same as the current page. Stopping to avoid loop.", "yellow")
             break
 
         chapter_number += 1
-
-        # Delay to avoid overloading the server
-        delay = random.uniform(1.5, 3.5) # seconds, randomized
-        print(f"   Waiting {delay:.1f} seconds before next chapter...")
+        delay = random.uniform(1.5, 3.5)
+        log(f"   Waiting {delay:.1f} seconds before next chapter...")
         time.sleep(delay)
 
-    print("\nChapter download process completed.")
-    return story_output_folder_final # Returns the path of the folder where chapters were saved
-
+    log("\nChapter download process completed.")
+    return story_output_folder_final
 
 if __name__ == '__main__':
-    # Quick test for fetch_story_metadata_and_first_chapter
-    test_overview_url = "https://www.royalroad.com/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed" # User example URL
-    # test_overview_url = "https://www.royalroad.com/fiction/76844/the-final-wish-a-litrpg-adventure" # Another example
+    # Define a simple print-based logger for standalone testing
+    def test_logger(message: str, style: Optional[str] = None):
+        if style:
+            print(f"[{style.upper()}] {message}")
+        else:
+            print(message)
+
+    test_overview_url = "https://www.royalroad.com/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed"
     print(f"Starting metadata fetch test for: {test_overview_url}")
-    metadata = fetch_story_metadata_and_first_chapter(test_overview_url)
+    metadata = fetch_story_metadata_and_first_chapter(test_overview_url, logger_callback=test_logger)
     if metadata:
         print("\nMetadata found:")
         for key, value in metadata.items():
             print(f"  {key}: {value}")
 
-        # Quick test for download_story (optional, this would usually go in main.py)
         if metadata.get('first_chapter_url') and metadata.get('story_slug'):
             test_output_base_folder = "downloaded_story_test_from_overview"
             if not os.path.exists(test_output_base_folder):
                 os.makedirs(test_output_base_folder, exist_ok=True)
 
             print(f"\nStarting download test for: {metadata['first_chapter_url']}")
-            # Passes test_output_base_folder, and download_story will create the slug subfolder within it.
-            downloaded_to = download_story(metadata['first_chapter_url'], test_output_base_folder, story_slug_override=metadata['story_slug'])
+            downloaded_to = download_story(
+                metadata['first_chapter_url'], 
+                test_output_base_folder, 
+                story_slug_override=metadata['story_slug'],
+                logger_callback=test_logger
+            )
             print(f"Test download completed. Chapters in: {downloaded_to}")
         else:
             print("\nCould not test download, incomplete metadata (first chapter URL or slug missing).")
-
     else:
         print("\nMetadata fetch test failed.")
