@@ -2,6 +2,7 @@ import typer
 import os
 import shutil
 import traceback
+from typing import Optional
 
 from core.crawler import download_story # fetch_story_metadata_and_first_chapter is now used by cli_helpers
 from core.processor import process_story_chapters
@@ -154,6 +155,30 @@ def build_epub_command(
         "--title",
         "-t",
         help="Story title to be used in the EPUB metadata. If not provided, it will attempt to extract from the first chapter file."
+    ),
+    cover_url_param: Optional[str] = typer.Option(
+        None,
+        "--cover-url",
+        "-cu",
+        help="URL of the cover image for the EPUB."
+    ),
+    description_param: Optional[str] = typer.Option(
+        None,
+        "--description",
+        "-d",
+        help="Description for the EPUB metadata."
+    ),
+    tags_param: Optional[str] = typer.Option(
+        None,
+        "--tags",
+        "-tg",
+        help="Comma-separated list of tags/genres for the EPUB metadata."
+    ),
+    publisher_param: Optional[str] = typer.Option(
+        None,
+        "--publisher",
+        "-p",
+        help="Publisher name for the EPUB metadata."
     )
 ):
     """
@@ -181,7 +206,11 @@ def build_epub_command(
             output_folder=story_specific_output_folder,   
             chapters_per_epub=chapters_per_epub, # Pass directly
             author_name=author_name,
-            story_title=story_title 
+            story_title=story_title,
+            cover_image_url=cover_url_param,
+            story_description=description_param,
+            tags=tags_param.split(',') if tags_param else None,
+            publisher_name=publisher_param
         )
         typer.secho(f"\nEPUB generation concluded successfully! Files in {story_specific_output_folder}", fg=typer.colors.GREEN)
     except Exception as e:
@@ -253,9 +282,15 @@ def full_process_command(
         title_param=story_title_param
     )
 
-    final_story_title, final_author_name = finalize_epub_metadata(
+    final_story_title, final_author_name, final_cover_url, final_description, final_tags, final_publisher = finalize_epub_metadata(
         title_param=story_title_param,
         author_param=author_name_param,
+        # These new params for finalize_epub_metadata are for CLI overrides,
+        # which are not yet added to full_process_command. For now, they are None.
+        cover_url_param=None, 
+        description_param=None,
+        tags_param=None, # This is a string for finalize_epub_metadata, not a list yet
+        publisher_param=None,
         fetched_metadata=fetched_metadata,
         story_slug=story_slug_for_folders
     )
@@ -307,7 +342,11 @@ def full_process_command(
             output_folder=story_specific_epub_output_folder,  
             chapters_per_epub=chapters_per_epub, # Pass directly
             author_name=final_author_name,
-            story_title=final_story_title
+            story_title=final_story_title,
+            cover_image_url=final_cover_url,
+            story_description=final_description,
+            tags=final_tags, # This is already a list from finalize_epub_metadata
+            publisher_name=final_publisher
         )
         typer.secho(f"EPUB generation process finished. Files should be in: {story_specific_epub_output_folder}", fg=typer.colors.GREEN)
     except Exception as e:

@@ -135,12 +135,20 @@ def determine_story_slug_for_folders(
 def finalize_epub_metadata(
     title_param: Optional[str],
     author_param: Optional[str],
+    cover_url_param: Optional[str],
+    description_param: Optional[str],
+    tags_param: Optional[str], # Comma-separated string from Typer
+    publisher_param: Optional[str],
     fetched_metadata: Optional[Dict],
     story_slug: str
-) -> Tuple[str, str]:
-    """Finalizes story title and author name for EPUB metadata."""
+) -> Tuple[str, str, Optional[str], Optional[str], list, Optional[str]]:
+    """Finalizes metadata for EPUB creation."""
     final_story_title = "Archived Royal Road Story" # Default
     final_author_name = "Royal Road Archiver"   # Default
+    final_cover_image_url: Optional[str] = None
+    final_description: Optional[str] = None
+    final_tags: list = []
+    final_publisher: Optional[str] = None
 
     if title_param:
         final_story_title = title_param
@@ -154,5 +162,29 @@ def finalize_epub_metadata(
     elif fetched_metadata and fetched_metadata.get('author_name') and fetched_metadata['author_name'] != "Unknown Author":
         final_author_name = fetched_metadata['author_name']
 
-    typer.echo(f"EPUB Metadata: Title='{final_story_title}', Author='{final_author_name}'")
-    return final_story_title, final_author_name
+    # Finalize Cover Image URL
+    if cover_url_param:
+        final_cover_image_url = cover_url_param
+    elif fetched_metadata and fetched_metadata.get('cover_image_url'):
+        final_cover_image_url = fetched_metadata['cover_image_url']
+
+    # Finalize Description
+    if description_param:
+        final_description = description_param
+    elif fetched_metadata and fetched_metadata.get('description'):
+        final_description = fetched_metadata['description']
+
+    # Finalize Tags
+    if tags_param: # Comma-separated string
+        final_tags = [tag.strip() for tag in tags_param.split(',') if tag.strip()]
+    elif fetched_metadata and fetched_metadata.get('tags'): # Already a list
+        final_tags = fetched_metadata['tags']
+    
+    # Finalize Publisher
+    if publisher_param:
+        final_publisher = publisher_param
+    elif fetched_metadata and fetched_metadata.get('publisher'):
+        final_publisher = fetched_metadata['publisher']
+
+    typer.echo(f"EPUB Metadata: Title='{final_story_title}', Author='{final_author_name}', Cover='{final_cover_image_url}', Publisher='{final_publisher}', Tags='{final_tags}', Description Length='{len(final_description) if final_description else 0}'")
+    return final_story_title, final_author_name, final_cover_image_url, final_description, final_tags, final_publisher
