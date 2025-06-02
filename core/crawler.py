@@ -2,6 +2,7 @@ import random
 import requests
 from bs4 import BeautifulSoup
 import os
+import json
 import time
 import re # To clean filenames
 from urllib.parse import urljoin # To build absolute URLs
@@ -47,8 +48,81 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
         'first_chapter_url': None,
         'story_title': "Unknown Title",
         'author_name': "Unknown Author",
-        'story_slug': None
+        'story_slug': None,
+        'cover_image_url': None,
+        'description': None,
+        'tags': [],
+        'publisher': None
     }
+
+    # Attempt to parse JSON-LD
+    json_ld_data = None
+    script_tag_ld = soup.find('script', type='application/ld+json')
+    if script_tag_ld:
+        try:
+            json_ld_data = json.loads(script_tag_ld.string)
+        except json.JSONDecodeError as e:
+            print(f"   WARNING: Error parsing JSON-LD: {e}")
+
+    # Extract cover_image_url
+    og_image_tag = soup.find('meta', property='og:image')
+    if og_image_tag and og_image_tag.get('content'):
+        metadata['cover_image_url'] = og_image_tag['content']
+    else:
+        twitter_image_tag = soup.find('meta', attrs={'name': 'twitter:image'})
+        if twitter_image_tag and twitter_image_tag.get('content'):
+            metadata['cover_image_url'] = twitter_image_tag['content']
+        elif json_ld_data and isinstance(json_ld_data.get('image'), str):
+            metadata['cover_image_url'] = json_ld_data['image']
+        elif json_ld_data and isinstance(json_ld_data.get('image'), dict) and isinstance(json_ld_data['image'].get('url'), str):
+            metadata['cover_image_url'] = json_ld_data['image']['url'] # Handle cases where image is an object
+        elif json_ld_data and isinstance(json_ld_data.get('image'), list) and len(json_ld_data['image']) > 0:
+             # Handle cases where image is a list of images, take the first one
+            first_image = json_ld_data['image'][0]
+            if isinstance(first_image, str):
+                 metadata['cover_image_url'] = first_image
+            elif isinstance(first_image, dict) and isinstance(first_image.get('url'), str):
+                 metadata['cover_image_url'] = first_image['url']
+
+
+    # Extract description
+    og_description_tag = soup.find('meta', property='og:description')
+    if og_description_tag and og_description_tag.get('content'):
+        metadata['description'] = og_description_tag['content']
+    else:
+        twitter_description_tag = soup.find('meta', attrs={'name': 'twitter:description'})
+        if twitter_description_tag and twitter_description_tag.get('content'):
+            metadata['description'] = twitter_description_tag['content']
+        elif json_ld_data and isinstance(json_ld_data.get('description'), str):
+            metadata['description'] = json_ld_data['description']
+
+    # Extract tags
+    tags_list = []
+    keywords_tag = soup.find('meta', attrs={'name': 'keywords'})
+    if keywords_tag and keywords_tag.get('content'):
+        tags_list.extend([tag.strip() for tag in keywords_tag['content'].split(',') if tag.strip()])
+
+    if json_ld_data:
+        if isinstance(json_ld_data.get('genre'), str):
+            tags_list.append(json_ld_data['genre'].strip())
+        elif isinstance(json_ld_data.get('genre'), list):
+            tags_list.extend([g.strip() for g in json_ld_data['genre'] if isinstance(g, str) and g.strip()])
+        # Also check for keywords in JSON-LD as some sites might use it
+        if isinstance(json_ld_data.get('keywords'), str):
+            tags_list.extend([tag.strip() for tag in json_ld_data['keywords'].split(',') if tag.strip()])
+        elif isinstance(json_ld_data.get('keywords'), list):
+            tags_list.extend([k.strip() for k in json_ld_data['keywords'] if isinstance(k, str) and k.strip()])
+
+
+    if tags_list:
+        metadata['tags'] = sorted(list(set(tags_list))) # Keep unique tags and sort them
+
+    # Extract publisher
+    if json_ld_data and isinstance(json_ld_data.get('publisher'), dict) and isinstance(json_ld_data['publisher'].get('name'), str):
+        metadata['publisher'] = json_ld_data['publisher']['name'].strip()
+    elif json_ld_data and isinstance(json_ld_data.get('sourceOrganization'), dict) and isinstance(json_ld_data['sourceOrganization'].get('name'), str): # Common alternative
+        metadata['publisher'] = json_ld_data['sourceOrganization']['name'].strip()
+
 
     # Extrair URL do primeiro capítulo
     # Look for the "Start Reading" button or similar that leads to the first chapter
@@ -97,15 +171,27 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
     else:
         # Fallback: Try to find in the JSON LD schema
         script_tag = soup.find('script', type='application/ld+json')
-        if script_tag:
+        if json_ld_data: # Use pre-parsed json_ld_data
             try:
-                import json
-                json_data = json.loads(script_tag.string)
-                if json_data.get('author') and json_data['author'].get('name'):
-                    metadata['author_name'] = json_data['author']['name'].strip()
-                    print(f"   Author name (JSON-LD fallback) found: {metadata['author_name']}")
-            except Exception as e:
-                print(f"   WARNING: Error parsing JSON-LD for author name: {e}")
+                # Check if author is a string (some schemas might have simple name string)
+                if isinstance(json_ld_data.get('author'), str):
+                    metadata['author_name'] = json_ld_data['author'].strip()
+                    print(f"   Author name (JSON-LD fallback - string) found: {metadata['author_name']}")
+                # Check if author is a dictionary (standard)
+                elif isinstance(json_ld_data.get('author'), dict) and json_ld_data['author'].get('name'):
+                    metadata['author_name'] = json_ld_data['author']['name'].strip()
+                    print(f"   Author name (JSON-LD fallback - object) found: {metadata['author_name']}")
+                # Check if author is a list of authors (take the first one)
+                elif isinstance(json_ld_data.get('author'), list) and len(json_ld_data['author']) > 0:
+                    first_author = json_ld_data['author'][0]
+                    if isinstance(first_author, str):
+                         metadata['author_name'] = first_author.strip()
+                         print(f"   Author name (JSON-LD fallback - list of strings) found: {metadata['author_name']}")
+                    elif isinstance(first_author, dict) and first_author.get('name'):
+                        metadata['author_name'] = first_author['name'].strip()
+                        print(f"   Author name (JSON-LD fallback - list of objects) found: {metadata['author_name']}")
+            except Exception as e: # Catch any unexpected errors during processing
+                print(f"   WARNING: Error processing JSON-LD for author name: {e}")
         if metadata['author_name'] == "Unknown Author": # If still not found
             print("   WARNING: Author name not found.")
 

@@ -50,7 +50,7 @@ class TestFullProcessCommand(unittest.TestCase):
         if os.path.exists(DEFAULT_EPUB_BASE):
             shutil.rmtree(DEFAULT_EPUB_BASE)
 
-    @patch('main.fetch_story_metadata_and_first_chapter')
+    @patch('core.cli_helpers.fetch_story_metadata_and_first_chapter') # Corrected mock target
     @patch('main.download_story')
     @patch('main.process_story_chapters')
     @patch('main.build_epubs_for_story')
@@ -104,7 +104,7 @@ class TestFullProcessCommand(unittest.TestCase):
             story_title="Test Title"
         )
 
-    @patch('main.fetch_story_metadata_and_first_chapter')
+    @patch('core.cli_helpers.fetch_story_metadata_and_first_chapter') # Corrected mock target
     @patch('main.download_story')
     @patch('main.process_story_chapters')
     @patch('main.build_epubs_for_story')
@@ -148,49 +148,57 @@ class TestFullProcessCommand(unittest.TestCase):
             story_title="Mock Story Slug From Url" 
         )
 
-    @patch('main.fetch_story_metadata_and_first_chapter')
+    @patch('core.cli_helpers.fetch_story_metadata_and_first_chapter') # Corrected mock target
     @patch('main.download_story')
     @patch('main.process_story_chapters')
     @patch('main.build_epubs_for_story')
+    @patch('os.path.isdir') # Added os.path.isdir mock
     def test_full_process_overview_url_default_start(
-        self, mock_build_epub, mock_process, mock_download, mock_fetch_metadata
+        self, mock_os_path_isdir, mock_build_epub, mock_process, mock_download, mock_fetch_metadata # Added mock_os_path_isdir
     ):
         mock_fetch_metadata.return_value = DUMMY_METADATA
-        expected_story_download_folder = os.path.join(os.path.abspath(DEFAULT_DOWNLOAD_BASE), DUMMY_METADATA['story_slug'])
+        expected_story_download_folder = os.path.join(self.download_base_abs, DUMMY_METADATA['story_slug']) # Use self.download_base_abs
         mock_download.return_value = expected_story_download_folder
+        mock_os_path_isdir.return_value = True # Assume directory is created
 
         overview_url = f"https://www.royalroad.com/fiction/123/{DUMMY_METADATA['story_slug']}"
 
         result = self.runner.invoke(app, [
-            "full-process",
-            overview_url,
-            # No --start-chapter-url, so metadata's first_chapter_url should be used
-        ], catch_exceptions=False)
+            "full-process", overview_url,
+            "--output-base-dir", self.base_test_dir # Use test-specific output
+            ], catch_exceptions=False)
         
-        print(f"CLI Output (test_full_process_overview_url_default_start):\n{result.stdout}")
-        self.assertEqual(result.exit_code, 0)
+        # print(f"CLI Output (test_full_process_overview_url_default_start):\n{result.stdout}")
+        self.assertEqual(result.exit_code, 0, msg=f"CLI command failed with output:\n{result.stdout}")
 
-        mock_fetch_metadata.assert_called_once_with(overview_url)
+        # Corrected assert for mock_fetch_metadata to use keyword args
+        mock_fetch_metadata.assert_called_once_with(story_url_arg=overview_url, start_chapter_url_param=None)
         
+        # Corrected assert for mock_download to use keyword args
         mock_download.assert_called_once_with(
-            DUMMY_METADATA['first_chapter_url'], # From metadata
-            os.path.abspath(DEFAULT_DOWNLOAD_BASE), 
+            first_chapter_url=DUMMY_METADATA['first_chapter_url'], 
+            output_folder=self.download_base_abs,  # Use self.download_base_abs
             story_slug_override=DUMMY_METADATA['story_slug']
         )
         
         expected_processed_input_folder = expected_story_download_folder
-        expected_processed_output_folder = os.path.join(os.path.abspath(DEFAULT_PROCESSED_BASE), DUMMY_METADATA['story_slug'])
+        expected_processed_output_folder = os.path.join(self.processed_base_abs, DUMMY_METADATA['story_slug']) # Use self.processed_base_abs
         mock_process.assert_called_once_with(expected_processed_input_folder, expected_processed_output_folder)
 
+        # Corrected assert for mock_build_epub to include new metadata fields and use self.epub_base_abs
         mock_build_epub.assert_called_once_with(
             input_folder=expected_processed_output_folder,
-            output_folder=os.path.abspath(DEFAULT_EPUB_BASE),
+            output_folder=os.path.join(self.epub_base_abs, DUMMY_METADATA['story_slug']), # Use self.epub_base_abs
             chapters_per_epub=50,
-            author_name=DUMMY_METADATA['author_name'], # From metadata
-            story_title=DUMMY_METADATA['story_title']  # From metadata
+            author_name=DUMMY_METADATA['author_name'], 
+            story_title=DUMMY_METADATA['story_title'],
+            cover_image_url=DUMMY_METADATA['cover_image_url'],
+            story_description=DUMMY_METADATA['description'],
+            tags=DUMMY_METADATA['tags'],
+            publisher_name=DUMMY_METADATA['publisher']
         )
     
-    @patch('main.fetch_story_metadata_and_first_chapter')
+    @patch('core.cli_helpers.fetch_story_metadata_and_first_chapter')
     @patch('main.download_story')
     @patch('main.process_story_chapters')
     @patch('main.build_epubs_for_story')
@@ -220,7 +228,7 @@ class TestFullProcessCommand(unittest.TestCase):
         if os.path.exists("test_crawl_output"):
             shutil.rmtree("test_crawl_output")
 
-    @patch('main.fetch_story_metadata_and_first_chapter')
+    @patch('core.cli_helpers.fetch_story_metadata_and_first_chapter') # Corrected mock target
     @patch('main.download_story')
     def test_crawl_command_chapter_url_as_main_arg(
         self, mock_download, mock_fetch_metadata

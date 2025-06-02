@@ -9,7 +9,7 @@ A command-line tool to download stories from Royal Road, process them into clean
 -   **Crawl Stories**: Download entire stories or specific chapters from Royal Road.
 -   **Process HTML**: Clean the downloaded HTML, removing unnecessary scripts, styles, and unwanted elements.
 -   **Build EPUBs**: Convert the cleaned HTML chapters into well-formatted EPUB files, with options to split into multiple volumes.
--   **Metadata Handling**: Fetch and utilize story metadata like title, author, and slug for organizing files and EPUBs.
+-   **Metadata Handling**: Fetch and utilize story metadata like title, author, slug, cover image, description, tags, and publisher for organizing files and EPUBs.
 -   **Flexible Workflow**: Use individual commands for crawling, processing, and building EPUBs, or run a full end-to-end process with a single command.
 
 ---
@@ -103,7 +103,7 @@ python main.py <command> --help
 -   **`build-epub`**: Generates EPUB files from cleaned HTML chapters.
 
     ```bash
-    python main.py build-epub <INPUT_PROCESSED_FOLDER> -o <OUTPUT_EPUB_FOLDER> -c <CHAPTERS_PER_EPUB> --author "<AUTHOR_NAME>" --title "<STORY_TITLE>"
+    python main.py build-epub <INPUT_PROCESSED_FOLDER> -o <OUTPUT_EPUB_FOLDER> -c <CHAPTERS_PER_EPUB> --author "<AUTHOR_NAME>" --title "<STORY_TITLE>" --cover-url "<URL>" --description "<TEXT>" --tags "<TAG1,TAG2>" --publisher "<NAME>"
     ```
 
     -   `<INPUT_PROCESSED_FOLDER>`: Path to the folder containing cleaned HTML chapters (e.g., `processed_stories/story-slug`).
@@ -111,39 +111,50 @@ python main.py <command> --help
     -   `-c <CHAPTERS_PER_EPUB>`: (Optional) Number of chapters per EPUB file (0 for a single EPUB). Default: 50.
     -   `--author "<AUTHOR_NAME>"`: (Optional) Author name for EPUB metadata. Default: "Royal Road Archiver".
     -   `--title "<STORY_TITLE>"`: (Optional) Story title for EPUB metadata. Default: "Archived Royal Road Story".
+    -   `--cover-url <URL>` / `-cu <URL>`: (Optional) URL of the cover image for the EPUB.
+    -   `--description "<TEXT>"` / `-d "<TEXT>"`: (Optional) Description for the EPUB metadata.
+    -   `--tags "<TAG1,TAG2>"` / `-tg "<TAG1,TAG2>"`: (Optional) Comma-separated list of tags/genres for the EPUB metadata.
+    -   `--publisher "<NAME>"` / `-p "<NAME>"`: (Optional) Publisher name for the EPUB metadata.
 
 -   **`full-process`**: Performs the entire sequence: download, process, and build EPUB.
     ```bash
-    python main.py full-process <STORY_URL_OR_CHAPTER_URL> --start-chapter-url <SPECIFIC_CHAPTER_URL_TO_START_FROM> -c <CHAPTERS_PER_EPUB> --author "<AUTHOR_NAME>" --title "<STORY_TITLE>" --keep-intermediate-files
+    python main.py full-process <STORY_URL_OR_CHAPTER_URL> --start-chapter-url <SPECIFIC_CHAPTER_URL_TO_START_FROM> -c <CHAPTERS_PER_EPUB> --author "<AUTHOR_NAME>" --title "<STORY_TITLE>" --keep-intermediate-files --output-base-dir <BASE_OUTPUT_DIRECTORY>
     ```
     -   This command combines the functionality of `crawl`, `process`, and `build-epub`.
-    -   It uses default base folders: `downloaded_stories`, `processed_stories`, and `epubs`. EPUBs for a story will be saved in a subfolder named after the story slug within the `epubs` directory (e.g., `epubs/story-slug/`).
+    -   `--output-base-dir <BASE_OUTPUT_DIRECTORY>`: (Optional) Specify a base directory where `downloaded_stories`, `processed_stories`, and `epubs` subdirectories will be created. If not provided, these folders are created in the current working directory.
     -   **Cleanup**: By default, after successfully generating the EPUB(s), the intermediate folders (`downloaded_stories/story-slug` and `processed_stories/story-slug`) are automatically deleted to save space.
     -   `--keep-intermediate-files`: (Optional) Add this flag if you want to preserve the downloaded (raw HTML) and processed (cleaned HTML) chapter folders. This can be useful for debugging or if you want to re-process or re-build EPUBs with different settings without re-downloading.
+    -   Other options like `--author`, `--title`, `-c` are passed through to the respective steps. Metadata like cover, description, tags, and publisher are automatically fetched if an overview URL is provided. If you provide specific CLI options for author/title, they will override any fetched values.
 
 ### Examples:
 
-1.  **Full process for a story from its overview page:**
+1.  **Full process for a story from its overview page, using fetched metadata for EPUB:**
 
     ```bash
-    python main.py full-process "[https://www.royalroad.com/fiction/12345/my-awesome-story](https://www.royalroad.com/fiction/12345/my-awesome-story)" --title "My Awesome Story" --author "Story Author"
+    python main.py full-process "https://www.royalroad.com/fiction/12345/my-awesome-story"
+    ```
+    *(This will attempt to use the title, author, cover, etc., fetched from the story's page for the EPUB metadata.)*
+
+2.  **Full process, overriding title and author, and keeping intermediate files:**
+    ```bash
+    python main.py full-process "https://www.royalroad.com/fiction/12345/my-awesome-story" --title "My Custom Title For EPUB" --author "Custom Author" --keep-intermediate-files
     ```
 
-2.  **Crawl a story starting from a specific chapter:**
+3.  **Crawl a story starting from a specific chapter:**
 
     ```bash
-    python main.py crawl "[https://www.royalroad.com/fiction/12345/my-awesome-story](https://www.royalroad.com/fiction/12345/my-awesome-story)" --start-chapter-url "[https://www.royalroad.com/fiction/12345/my-awesome-story/chapter/67890/chapter-5-the-adventure-begins](https://www.royalroad.com/fiction/12345/my-awesome-story/chapter/67890/chapter-5-the-adventure-begins)"
+    python main.py crawl "https://www.royalroad.com/fiction/12345/my-awesome-story" --start-chapter-url "https://www.royalroad.com/fiction/12345/my-awesome-story/chapter/67890/chapter-5-the-adventure-begins"
     ```
 
-3.  **Process previously downloaded chapters:**
+4.  **Process previously downloaded chapters:**
 
     ```bash
     python main.py process downloaded_stories/my-awesome-story
     ```
 
-4.  **Build an EPUB from processed chapters (all chapters in one file):**
+5.  **Build an EPUB from processed chapters with specific metadata overrides:**
     ```bash
-    python main.py build-epub processed_stories/my-awesome-story -c 0 --title "My Awesome Story - Full"
+    python main.py build-epub processed_stories/my-awesome-story -c 0 --title "My Awesome Story - Full" --author "Story Author" --cover-url "http://example.com/cover.jpg" --description "A really cool story." --tags "Fantasy,Adventure,LitRPG" --publisher "My Self-Publishing"
     ```
 
 ---
@@ -173,5 +184,8 @@ If you want to run the tests:
     ```
     Or directly run the test file:
     ```bash
-    python tests/test_main.py
+    python tests/test_main.py 
     ```
+
+---
+*Disclaimer: This tool is for personal use only to archive stories for offline reading. Please support the authors on Royal Road by reading their work on the platform and through any monetization options they provide.*
