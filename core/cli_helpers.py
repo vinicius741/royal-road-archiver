@@ -4,6 +4,7 @@ import time
 import typer
 from typing import Tuple, Optional, Dict
 
+from .logging_utils import log_info, log_warning, log_error, log_debug
 # It's better to import this if it's going to be used by helpers,
 # rather than passing the function around or re-implementing.
 from .crawler import fetch_story_metadata_and_first_chapter
@@ -118,11 +119,11 @@ def resolve_crawl_url_and_metadata(
 
     for log_entry in result['logs']:
         if log_entry['level'] == 'info':
-            typer.echo(log_entry['message'])
+            log_info(log_entry['message'])
         elif log_entry['level'] == 'warning':
-            typer.secho(log_entry['message'], fg=typer.colors.YELLOW)
+            log_warning(log_entry['message'])
         elif log_entry['level'] == 'error':
-            typer.secho(log_entry['message'], fg=typer.colors.RED)
+            log_error(log_entry['message'])
 
     return result['actual_crawl_start_url'], result['fetched_metadata'], result['initial_slug'], result['resolved_overview_url']
 
@@ -191,9 +192,9 @@ def determine_story_slug_for_folders(
 
     for log_entry in result['logs']:
         if log_entry['level'] == 'info':
-            typer.echo(log_entry['message'])
+            log_info(log_entry['message'])
         elif log_entry['level'] == 'warning':
-            typer.secho(log_entry['message'], fg=typer.colors.YELLOW)
+            log_warning(log_entry['message'])
         # No error level defined for this function's logs in the original code
 
     return result['story_slug']
@@ -290,10 +291,10 @@ def finalize_epub_metadata(
     for log_entry in result['logs']:
         # Assuming all logs from this function are info level as per original
         if log_entry['level'] == 'info':
-            typer.echo(log_entry['message'])
+            log_info(log_entry['message'])
         # Add other levels here if they were used in the original, e.g.
         # elif log_entry['level'] == 'warning':
-        #     typer.secho(log_entry['message'], fg=typer.colors.YELLOW)
+        #     log_warning(log_entry['message'])
 
     return (
         result['final_story_title'],

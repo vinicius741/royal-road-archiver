@@ -8,6 +8,8 @@ import time
 import re # To clean filenames
 from urllib.parse import urljoin # To build absolute URLs
 
+from core.logging_utils import log_info, log_warning, log_error, log_debug, log_success
+
 # Header to simulate a browser and avoid simple blocks
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -34,14 +36,14 @@ def _load_download_status(metadata_filepath: str) -> dict:
             data = json.load(f)
             # Basic validation, can be expanded
             if not isinstance(data, dict) or "chapters" not in data:
-                print(f"   WARNING: Metadata file {metadata_filepath} has unexpected structure. Resetting.")
+                log_warning(f"Metadata file {metadata_filepath} has unexpected structure. Resetting.")
                 return default_status
             return data
     except json.JSONDecodeError:
-        print(f"   WARNING: Corrupt metadata file: {metadata_filepath}. Resetting to default.")
+        log_warning(f"Corrupt metadata file: {metadata_filepath}. Resetting to default.")
         return default_status
     except IOError as e:
-        print(f"   ERROR reading metadata file {metadata_filepath}: {e}. Returning default.")
+        log_error(f"ERROR reading metadata file {metadata_filepath}: {e}. Returning default.")
         return default_status
 
 def _save_download_status(metadata_filepath: str, data: dict):
@@ -53,30 +55,30 @@ def _save_download_status(metadata_filepath: str, data: dict):
         os.makedirs(os.path.dirname(metadata_filepath), exist_ok=True)
         with open(metadata_filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"   Download status saved to: {metadata_filepath}")
+        log_success(f"Download status saved to: {metadata_filepath}")
     except IOError as e:
-        print(f"   ERROR saving download status to {metadata_filepath}: {e}")
+        log_error(f"ERROR saving download status to {metadata_filepath}: {e}")
     except Exception as ex:
-        print(f"   UNEXPECTED ERROR saving download status to {metadata_filepath}: {ex}")
+        log_error(f"UNEXPECTED ERROR saving download status to {metadata_filepath}: {ex}")
 
 def _download_page_html(page_url: str) -> requests.Response | None:
     """
     Downloads the HTML content of a URL.
     Returns the request's response object or None in case of error.
     """
-    print(f"   Trying to download: {page_url}")
+    log_debug(f"Trying to download: {page_url}")
     try:
         response = requests.get(page_url, headers=HEADERS, timeout=15) # 15s timeout
         response.raise_for_status()  # Raises an error for 4xx/5xx HTTP codes
         return response
     except requests.exceptions.HTTPError as http_err:
-        print(f"   HTTP error downloading {page_url}: {http_err}")
+        log_error(f"HTTP error downloading {page_url}: {http_err}")
     except requests.exceptions.ConnectionError as conn_err:
-        print(f"   Connection error downloading {page_url}: {conn_err}")
+        log_error(f"Connection error downloading {page_url}: {conn_err}")
     except requests.exceptions.Timeout as timeout_err:
-        print(f"   Timeout downloading {page_url}: {timeout_err}")
+        log_warning(f"Timeout downloading {page_url}: {timeout_err}")
     except requests.exceptions.RequestException as req_err:
-        print(f"   General error downloading {page_url}: {req_err}")
+        log_error(f"General error downloading {page_url}: {req_err}")
     return None
 
 def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
@@ -84,10 +86,10 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
     Fetches story metadata (title, author, first chapter URL)
     from the story overview page.
     """
-    print(f"Fetching metadata from overview page: {overview_url}")
+    log_info(f"Fetching metadata from overview page: {overview_url}")
     response = _download_page_html(overview_url)
     if not response:
-        print("   Failed to download the overview page.")
+        log_error("Failed to download the overview page.")
         return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -110,7 +112,7 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
         try:
             json_ld_data = json.loads(script_tag_ld.string)
         except json.JSONDecodeError as e:
-            print(f"   WARNING: Error parsing JSON-LD: {e}")
+            log_warning(f"Error parsing JSON-LD: {e}")
 
     # Extract cover_image_url
     og_image_tag = soup.find('meta', property='og:image')
@@ -179,17 +181,17 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
     if start_reading_link and start_reading_link.get('href'):
         relative_url = start_reading_link['href']
         metadata['first_chapter_url'] = urljoin(overview_url, relative_url)
-        print(f"   First chapter URL found: {metadata['first_chapter_url']}")
+        log_info(f"First chapter URL found: {metadata['first_chapter_url']}")
     else:
-        print("   WARNING: First chapter URL not found on overview page.")
+        log_warning("First chapter URL not found on overview page.")
         # Tries to find in the chapter table if the button doesn't exist
         first_chapter_row_link = soup.select_one('table#chapters tbody tr[data-url] a')
         if first_chapter_row_link and first_chapter_row_link.get('href'):
             relative_url = first_chapter_row_link['href']
             metadata['first_chapter_url'] = urljoin(overview_url, relative_url)
-            print(f"   First chapter URL (table fallback) found: {metadata['first_chapter_url']}")
+            log_info(f"First chapter URL (table fallback) found: {metadata['first_chapter_url']}")
         else:
-            print("   CRITICAL ERROR: Could not find the first chapter URL.")
+            log_error("CRITICAL ERROR: Could not find the first chapter URL.")
             return None # Essential to continue
 
     # Extrair título da história
@@ -197,7 +199,7 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
     title_tag = soup.select_one('div.fic-title h1.font-white')
     if title_tag:
         metadata['story_title'] = title_tag.text.strip()
-        print(f"   Story title found: {metadata['story_title']}")
+        log_info(f"Story title found: {metadata['story_title']}")
     else:
         # Fallback to the page's <title> tag
         page_title_tag = soup.find('title')
@@ -205,9 +207,9 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
             # Ex: "Pioneer of the Abyss: An Underwater Livestreamed Isekai LitRPG | Royal Road"
             full_title = page_title_tag.text.strip()
             metadata['story_title'] = full_title.split('|')[0].strip() # Takes the part before the pipe
-            print(f"   Story title (title tag fallback) found: {metadata['story_title']}")
+            log_info(f"Story title (title tag fallback) found: {metadata['story_title']}")
         else:
-            print("   WARNING: Story title not found.")
+            log_warning("Story title not found.")
 
 
     # Extrair nome do autor
@@ -215,7 +217,7 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
     author_link = soup.select_one('div.fic-title h4 span a[href*="/profile/"]')
     if author_link:
         metadata['author_name'] = author_link.text.strip()
-        print(f"   Author name found: {metadata['author_name']}")
+        log_info(f"Author name found: {metadata['author_name']}")
     else:
         # Fallback: Try to find in the JSON LD schema
         script_tag = soup.find('script', type='application/ld+json')
@@ -224,24 +226,24 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
                 # Check if author is a string (some schemas might have simple name string)
                 if isinstance(json_ld_data.get('author'), str):
                     metadata['author_name'] = json_ld_data['author'].strip()
-                    print(f"   Author name (JSON-LD fallback - string) found: {metadata['author_name']}")
+                    log_info(f"Author name (JSON-LD fallback - string) found: {metadata['author_name']}")
                 # Check if author is a dictionary (standard)
                 elif isinstance(json_ld_data.get('author'), dict) and json_ld_data['author'].get('name'):
                     metadata['author_name'] = json_ld_data['author']['name'].strip()
-                    print(f"   Author name (JSON-LD fallback - object) found: {metadata['author_name']}")
+                    log_info(f"Author name (JSON-LD fallback - object) found: {metadata['author_name']}")
                 # Check if author is a list of authors (take the first one)
                 elif isinstance(json_ld_data.get('author'), list) and len(json_ld_data['author']) > 0:
                     first_author = json_ld_data['author'][0]
                     if isinstance(first_author, str):
                          metadata['author_name'] = first_author.strip()
-                         print(f"   Author name (JSON-LD fallback - list of strings) found: {metadata['author_name']}")
+                         log_info(f"Author name (JSON-LD fallback - list of strings) found: {metadata['author_name']}")
                     elif isinstance(first_author, dict) and first_author.get('name'):
                         metadata['author_name'] = first_author['name'].strip()
-                        print(f"   Author name (JSON-LD fallback - list of objects) found: {metadata['author_name']}")
+                        log_info(f"Author name (JSON-LD fallback - list of objects) found: {metadata['author_name']}")
             except Exception as e: # Catch any unexpected errors during processing
-                print(f"   WARNING: Error processing JSON-LD for author name: {e}")
+                log_warning(f"Error processing JSON-LD for author name: {e}")
         if metadata['author_name'] == "Unknown Author": # If still not found
-            print("   WARNING: Author name not found.")
+            log_warning("Author name not found.")
 
 
     # Extract story slug from the first chapter URL (more reliable)
@@ -254,7 +256,7 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
                 slug_part = parts[1].split('/')
                 if len(slug_part) > 1:
                      metadata['story_slug'] = _sanitize_filename(slug_part[1]) # slug_part[0] is the fiction ID
-                     print(f"   Story slug (from chapter URL) found: {metadata['story_slug']}")
+                     log_info(f"Story slug (from chapter URL) found: {metadata['story_slug']}")
         except IndexError:
             pass # Leaves slug as None if extraction fails
 
@@ -265,20 +267,20 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
                 slug_part = parts[1].split('/')
                 if len(slug_part) > 1: # /fiction/ID/slug/...
                     metadata['story_slug'] = _sanitize_filename(slug_part[1])
-                    print(f"   Story slug (from overview URL) found: {metadata['story_slug']}")
+                    log_info(f"Story slug (from overview URL) found: {metadata['story_slug']}")
                 elif len(slug_part) == 1 and slug_part[0]: # /fiction/ID (if there's no slug in the URL)
                     # In this case, the title can be a good alternative for the folder name
                     metadata['story_slug'] = _sanitize_filename(metadata['story_title'])
-                    print(f"   Story slug (title fallback) used: {metadata['story_slug']}")
+                    log_info(f"Story slug (title fallback) used: {metadata['story_slug']}")
 
         except IndexError:
-            print("   WARNING: Could not extract story slug from overview URL. Using title.")
+            log_warning("Could not extract story slug from overview URL. Using title.")
             metadata['story_slug'] = _sanitize_filename(metadata['story_title'])
 
     if not metadata['story_slug'] or metadata['story_slug'] == "unknown-title":
         # Last resort, use a generic name if everything fails
         timestamp_slug = f"story_{int(time.time())}"
-        print(f"   WARNING: Story slug could not be determined, using generic slug: {timestamp_slug}")
+        log_warning(f"Story slug could not be determined, using generic slug: {timestamp_slug}")
         metadata['story_slug'] = timestamp_slug
 
 
@@ -408,24 +410,24 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
         except IndexError:
             # If extraction fails, uses a generic time-based name for the subfolder
             story_specific_folder_name = f"story_{int(time.time())}"
-            print(f"Could not extract story name from URL, using generic slug for folder: {story_specific_folder_name}")
+            log_warning(f"Could not extract story name from URL, using generic slug for folder: {story_specific_folder_name}")
 
     # The 'output_folder' passed to download_story should already be the base
     # where the story folder (story_specific_folder_name) will be created or used.
     story_output_folder_final = os.path.join(output_folder, story_specific_folder_name)
 
     if not os.path.exists(story_output_folder_final):
-        print(f"Creating output folder for story chapters: {story_output_folder_final}")
+        log_info(f"Creating output folder for story chapters: {story_output_folder_final}")
         os.makedirs(story_output_folder_final, exist_ok=True)
     else:
-        print(f"Using existing output folder for story chapters: {story_output_folder_final}")
+        log_info(f"Using existing output folder for story chapters: {story_output_folder_final}")
 
     # New metadata path construction
     story_specific_metadata_folder = os.path.join(METADATA_ROOT_FOLDER, story_specific_folder_name)
     # The _save_download_status function will ensure story_specific_metadata_folder is created.
     metadata_filepath = os.path.join(story_specific_metadata_folder, "download_status.json")
     
-    print(f"Metadata will be loaded from/saved to: {metadata_filepath}") # For clarity
+    log_info(f"Metadata will be loaded from/saved to: {metadata_filepath}") # For clarity
     metadata = _load_download_status(metadata_filepath)
 
     # Initial Metadata Setup (for new downloads)
@@ -443,16 +445,16 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
     # Determine Start URL
     current_chapter_url = first_chapter_url # Default to first_chapter_url
     if metadata.get('next_expected_chapter_url') and isinstance(metadata['next_expected_chapter_url'], str) and metadata['next_expected_chapter_url'].strip():
-        print(f"Resuming download from: {metadata['next_expected_chapter_url']}")
+        log_info(f"Resuming download from: {metadata['next_expected_chapter_url']}")
         current_chapter_url = metadata['next_expected_chapter_url']
     else:
-        print(f"Starting new download from: {first_chapter_url}")
+        log_info(f"Starting new download from: {first_chapter_url}")
         metadata['chapters'] = [] # Ensure chapters list is clean if not resuming
 
     chapter_number_counter = len(metadata.get('chapters', [])) + 1
 
     while current_chapter_url:
-        print(f"\nProcessing chapter {chapter_number_counter} (URL: {current_chapter_url})...")
+        log_info(f"\nProcessing chapter {chapter_number_counter} (URL: {current_chapter_url})...")
 
         # Existing Chapter Check
         found_entry = None
@@ -462,10 +464,10 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
                 break
         
         if found_entry:
-            print(f"   Chapter already downloaded: {found_entry.get('filename', 'N/A')}. Skipping.")
+            log_info(f"Chapter already downloaded: {found_entry.get('filename', 'N/A')}. Skipping.")
             current_chapter_url = found_entry.get('next_url_from_page') # Use the next URL stored at the time of its download
             if not current_chapter_url:
-                print("   No further link found from this previously downloaded chapter. Ending process for this story.")
+                log_info("No further link found from this previously downloaded chapter. Ending process for this story.")
                 break
             time.sleep(0.1) # Short delay
             # No chapter_number_counter increment here as we are skipping to the *next* one.
@@ -475,14 +477,14 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
         # Download & Parse
         response = _download_chapter_html(current_chapter_url)
         if not response:
-            print(f"   Failed to download chapter {chapter_number_counter} from {current_chapter_url}.")
+            log_error(f"Failed to download chapter {chapter_number_counter} from {current_chapter_url}.")
             metadata['next_expected_chapter_url'] = current_chapter_url # Save current URL to resume later
             _save_download_status(metadata_filepath, metadata)
             break
 
         content_type = response.headers.get('content-type', '').lower()
         if 'text/html' not in content_type:
-            print(f"   WARNING: Content from {current_chapter_url} is not HTML (Content-Type: {content_type}). Skipping.")
+            log_warning(f"Content from {current_chapter_url} is not HTML (Content-Type: {content_type}). Skipping.")
             # Potentially save this URL as 'problematic' or 'skipped' in metadata if needed
             metadata['next_expected_chapter_url'] = None # Or decide how to handle
             _save_download_status(metadata_filepath, metadata)
@@ -501,7 +503,7 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
         else:
             final_title = parsed_title
 
-        print(f"   Chapter Title: {final_title}")
+        log_info(f"Chapter Title: {final_title}")
 
         safe_title_segment = _sanitize_filename(final_title if final_title else f"chapter_{chapter_number_counter:03d}")
         filename = f"chapter_{chapter_number_counter:03d}_{safe_title_segment[:100]}.html"
@@ -522,14 +524,14 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
                 f.write(f"<h1>{final_title}</h1>\n")
                 f.write(parsed_content_html)
                 f.write("\n</body>\n</html>")
-            print(f"   Saved to: {filepath}")
+            log_success(f"Saved to: {filepath}")
         except IOError as e:
-            print(f"   ERROR saving file {filepath}: {e}. Will attempt to resume from this chapter next time.")
+            log_error(f"ERROR saving file {filepath}: {e}. Will attempt to resume from this chapter next time.")
             metadata['next_expected_chapter_url'] = current_chapter_url
             _save_download_status(metadata_filepath, metadata)
             break 
         except Exception as ex:
-            print(f"   UNEXPECTED ERROR saving file {filepath}: {ex}. Will attempt to resume from this chapter next time.")
+            log_error(f"UNEXPECTED ERROR saving file {filepath}: {ex}. Will attempt to resume from this chapter next time.")
             metadata['next_expected_chapter_url'] = current_chapter_url
             _save_download_status(metadata_filepath, metadata)
             break
@@ -552,22 +554,22 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
         current_chapter_url = next_chapter_link_on_page
 
         if not current_chapter_url:
-            print("\nEnd of story reached (next chapter link was not found or was invalid).")
+            log_info("\nEnd of story reached (next chapter link was not found or was invalid).")
             break
         
         # Check for loop on same URL
         if response and current_chapter_url == response.url:
-             print(f"\nWARNING: Next chapter URL ({current_chapter_url}) is the same as the current page. Stopping to avoid loop.")
+             log_warning(f"\nNext chapter URL ({current_chapter_url}) is the same as the current page. Stopping to avoid loop.")
              metadata['next_expected_chapter_url'] = None # Prevent trying this again
              _save_download_status(metadata_filepath, metadata)
              break
 
         chapter_number_counter += 1
         delay = random.uniform(1.5, 3.5)
-        print(f"   Waiting {delay:.1f} seconds before next chapter...")
+        log_debug(f"Waiting {delay:.1f} seconds before next chapter...")
         time.sleep(delay)
 
-    print("\nChapter download process completed.")
+    log_info("\nChapter download process completed.")
     return story_output_folder_final # Returns the path of the folder where chapters were saved
 
 
@@ -576,12 +578,12 @@ if __name__ == '__main__':
     # test_overview_url = "https://www.royalroad.com/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed" # User example URL
     test_overview_url = "https://www.royalroad.com/fiction/76844/the-final-wish-a-litrpg-adventure" # Another example
     # test_overview_url = "https://www.royalroad.com/fiction/21220/mother-of-learning" # MoL
-    print(f"Starting metadata fetch test for: {test_overview_url}")
+    log_info(f"Starting metadata fetch test for: {test_overview_url}")
     metadata = fetch_story_metadata_and_first_chapter(test_overview_url)
     if metadata:
-        print("\nMetadata found:")
-        for key, value in metadata.items():
-            print(f"  {key}: {value}")
+        log_info("\nMetadata found:")
+        for key, value in metadata.items(): # Convert to log_debug or remove
+            log_debug(f"  {key}: {value}")
 
         # Quick test for download_story (optional, this would usually go in main.py)
         if metadata.get('first_chapter_url') and metadata.get('story_slug'):
@@ -589,7 +591,7 @@ if __name__ == '__main__':
             if not os.path.exists(test_output_base_folder):
                 os.makedirs(test_output_base_folder, exist_ok=True)
 
-            print(f"\nStarting download test for: {metadata['first_chapter_url']}")
+            log_info(f"\nStarting download test for: {metadata['first_chapter_url']}")
             # Passes test_output_base_folder, and download_story will create the slug subfolder within it.
             downloaded_to = download_story(
                 first_chapter_url=metadata['first_chapter_url'],
@@ -599,9 +601,9 @@ if __name__ == '__main__':
                 story_title=metadata['story_title'], # Pass the new param
                 author_name=metadata['author_name'] # Pass the new param
             )
-            print(f"Test download completed. Chapters in: {downloaded_to}")
+            log_success(f"Test download completed. Chapters in: {downloaded_to}")
         else:
-            print("\nCould not test download, incomplete metadata (first chapter URL or slug missing).")
+            log_warning("\nCould not test download, incomplete metadata (first chapter URL or slug missing).")
 
     else:
-        print("\nMetadata fetch test failed.")
+        log_error("\nMetadata fetch test failed.")
