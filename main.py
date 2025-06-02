@@ -13,7 +13,9 @@ from core.cli_helpers import (
     determine_story_slug_for_folders,
     finalize_epub_metadata,
 )
+from core.epub_builder import modify_epub_content # Added for remove-sentences
 from core.gdrive_uploader import authenticate_gdrive, upload_story_files, APP_ROOT_FOLDER_NAME
+import json # Added for remove-sentences
 
 app = typer.Typer(help="CLI for downloading and processing stories from Royal Road.", no_args_is_help=True)
 
@@ -256,6 +258,12 @@ def full_process_command(
         False,
         "--keep-intermediate-files",
         help="If True, preserves the downloaded and processed chapter folders. Defaults to False (deleting them)."
+    ),
+    sentence_removal_json_path: Optional[str] = typer.Option(
+        None,
+        "--remove-sentences-json",
+        "-rsj",
+        help="Optional path to a JSON file with sentences to remove from the final EPUBs."
     )
 ):
     """
@@ -312,6 +320,56 @@ def full_process_command(
         final_publisher=init_data['final_publisher']
     )
 
+    # --- 4. Cleanup Step ---
+    _run_cleanup_step(
+        keep_intermediate_files=keep_intermediate_files,
+        story_specific_download_folder=story_specific_download_folder,
+        story_specific_processed_folder=story_specific_processed_folder
+    )
+
+    # --- Step 3.5: Optional Sentence Removal ---
+    if sentence_removal_json_path:
+        typer.secho(f"\n--- Step 3.5: Optionally removing sentences based on {sentence_removal_json_path} ---", fg=typer.colors.CYAN)
+        if not os.path.exists(sentence_removal_json_path):
+            log_warning(f"Sentence removal JSON file not found: {sentence_removal_json_path}. Skipping sentence removal.")
+        else:
+            sentences_to_remove = None
+            try:
+                with open(sentence_removal_json_path, 'r', encoding='utf-8') as f:
+                    sentences_to_remove = json.load(f)
+                if not isinstance(sentences_to_remove, list) or not all(isinstance(s, str) for s in sentences_to_remove):
+                    log_warning("Content of sentence removal JSON is not a list of strings. Skipping sentence removal.")
+                    sentences_to_remove = None # Ensure it's None if not valid
+                elif not sentences_to_remove:
+                    log_info("Sentence removal JSON file is empty. No sentences to remove.")
+                else:
+                    log_info(f"Successfully loaded {len(sentences_to_remove)} sentences for removal.")
+            except FileNotFoundError: # Should be caught by os.path.exists, but as a fallback
+                log_warning(f"Sentence removal JSON file not found (despite earlier check): {sentence_removal_json_path}. Skipping sentence removal.")
+            except json.JSONDecodeError as e:
+                log_warning(f"Error decoding JSON from {sentence_removal_json_path}: {e}. Skipping sentence removal.")
+            except IOError as e:
+                log_warning(f"Error reading sentence file {sentence_removal_json_path}: {e}. Skipping sentence removal.")
+
+            if sentences_to_remove and story_specific_epub_output_folder and os.path.isdir(story_specific_epub_output_folder):
+                log_info(f"Processing EPUBs in: {story_specific_epub_output_folder} for sentence removal.")
+                for item_name in os.listdir(story_specific_epub_output_folder):
+                    if item_name.lower().endswith(".epub"):
+                        epub_file_path = os.path.join(story_specific_epub_output_folder, item_name)
+                        log_info(f"Applying sentence removal to: {epub_file_path}")
+                        try:
+                            # modify_epub_content logs its own success/failure for the modification part
+                            modify_epub_content(epub_file_path, sentences_to_remove)
+                        except Exception as e_mod: # Catch unexpected errors from modify_epub_content itself
+                            log_error(f"Error during sentence removal for {epub_file_path}: {e_mod}")
+                            log_debug(traceback.format_exc())
+            elif not sentences_to_remove: # Handles cases where loading failed or file was empty
+                 log_info("No valid sentences loaded for removal or file was empty. Proceeding without modifying EPUBs.")
+            else:
+                log_warning(f"EPUB output folder {story_specific_epub_output_folder} not found or is not a directory. Skipping sentence removal.")
+    else:
+        log_debug("No sentence removal JSON path provided. Skipping optional sentence removal step.")
+    
     # --- 4. Cleanup Step ---
     _run_cleanup_step(
         keep_intermediate_files=keep_intermediate_files,
@@ -570,6 +628,133 @@ def upload_to_gdrive_command(
         log_error(f"An error occurred during the Google Drive upload process: {e}")
         log_debug(traceback.format_exc())
         raise typer.Exit(code=1)
+
+
+@app.command(name="remove-sentences")
+def remove_sentences_command(
+    epub_directory: str = typer.Option("epubs", "--dir", "-d", help="Directory containing EPUB files to process."),
+    json_sentences_path: str = typer.Argument(..., help="Path to the JSON file containing the list of sentences to remove."),
+    output_directory: Optional[str] = typer.Option(None, "--out", "-o", help="Optional. Directory to save modified EPUBs. If not provided, original EPUBs are overwritten.")
+):
+    """
+    Removes a list of specified sentences from all EPUB files in a directory.
+    The sentences to remove are provided via a JSON file (a list of strings).
+    """
+    log_info(f"Starting sentence removal process. EPUBs in: '{epub_directory}', Sentences from: '{json_sentences_path}'")
+
+    # 1. Load sentences from JSON
+    if not os.path.exists(json_sentences_path):
+        log_error(f"Sentence file not found: {json_sentences_path}")
+        raise typer.Exit(code=1)
+
+    try:
+        with open(json_sentences_path, 'r', encoding='utf-8') as f:
+            loaded_sentences = json.load(f)
+        if not isinstance(loaded_sentences, list) or not all(isinstance(s, str) for s in loaded_sentences):
+            log_error("Invalid format in sentence file: Must be a JSON list of strings.")
+            raise typer.Exit(code=1)
+        if not loaded_sentences:
+            log_warning("Sentence file is empty. No sentences to remove.")
+            # Optionally exit or proceed to do nothing
+            # raise typer.Exit(code=0) 
+            return # Or just return if doing nothing is acceptable.
+        log_info(f"Successfully loaded {len(loaded_sentences)} sentences to remove.")
+    except json.JSONDecodeError:
+        log_error(f"Error decoding JSON from sentence file: {json_sentences_path}")
+        raise typer.Exit(code=1)
+    except IOError as e:
+        log_error(f"Error reading sentence file {json_sentences_path}: {e}")
+        raise typer.Exit(code=1)
+
+    # 2. Validate epub_directory
+    abs_epub_directory = os.path.abspath(epub_directory)
+    if not os.path.isdir(abs_epub_directory):
+        log_error(f"EPUB directory not found or is not a directory: {abs_epub_directory}")
+        raise typer.Exit(code=1)
+
+    # 3. Prepare output directory
+    abs_output_directory = None
+    if output_directory:
+        abs_output_directory = os.path.abspath(output_directory)
+        if not os.path.exists(abs_output_directory):
+            try:
+                os.makedirs(abs_output_directory, exist_ok=True)
+                log_info(f"Created output directory: {abs_output_directory}")
+            except OSError as e:
+                log_error(f"Error creating output directory '{abs_output_directory}': {e}")
+                raise typer.Exit(code=1)
+        else:
+            log_info(f"Using existing output directory: {abs_output_directory}")
+    else:
+        log_info("No output directory specified. Original EPUB files will be overwritten.")
+
+    # 4. Find and process EPUB files
+    processed_count = 0
+    modified_count = 0
+    found_epub_files = False
+
+    for item_name in os.listdir(abs_epub_directory):
+        # Check if the item is a directory (story slug folder)
+        story_slug_path = os.path.join(abs_epub_directory, item_name)
+        if os.path.isdir(story_slug_path):
+            # This is a story slug directory, e.g., 'epubs/my-cool-story'
+            # Iterate through files inside this story slug directory
+            for file_name in os.listdir(story_slug_path):
+                if file_name.lower().endswith('.epub'):
+                    found_epub_files = True
+                    epub_file_path = os.path.join(story_slug_path, file_name)
+                    log_info(f"Processing EPUB: {epub_file_path}")
+
+                    target_epub_path = epub_file_path # Default: overwrite
+                    
+                    if abs_output_directory:
+                        # Create a corresponding slug subfolder in the output directory
+                        output_story_slug_path = os.path.join(abs_output_directory, item_name)
+                        if not os.path.exists(output_story_slug_path):
+                            try:
+                                os.makedirs(output_story_slug_path, exist_ok=True)
+                            except OSError as e:
+                                log_error(f"Error creating output slug directory '{output_story_slug_path}': {e}")
+                                continue # Skip this file or handle error differently
+                        
+                        target_epub_path = os.path.join(output_story_slug_path, file_name)
+                        
+                        if target_epub_path != epub_file_path: # Ensure we are not copying to itself
+                            try:
+                                shutil.copy2(epub_file_path, target_epub_path)
+                                log_debug(f"Copied '{epub_file_path}' to '{target_epub_path}' for modification.")
+                            except shutil.Error as e:
+                                log_error(f"Error copying '{epub_file_path}' to '{target_epub_path}': {e}")
+                                continue # Skip this file
+                    
+                    # modify_epub_content works on the target_epub_path (which is a copy if output_dir is set, else original)
+                    # It will print its own success/failure for the modification itself.
+                    # We capture the return or check if the file was indeed modified if modify_epub_content is changed to return a status
+                    try:
+                        # Assuming modify_epub_content logs its own errors/success for the modification part
+                        # And it overwrites the file at target_epub_path
+                        modify_epub_content(target_epub_path, loaded_sentences)
+                        # To track if modify_epub_content actually made changes, it would ideally return a boolean.
+                        # For now, we assume if it runs without error, it's "processed".
+                        # A more robust way would be to check file modification times or hash before/after,
+                        # or have modify_epub_content return a status.
+                        # Let's assume modify_epub_content prints if it saved or not.
+                        # We'll count it as processed if the call completes.
+                        # If modify_epub_content is updated to return True if modified, we can use that.
+                        # For now, just increment processed_count.
+                        # modified_count would require more direct feedback from modify_epub_content.
+                        processed_count += 1
+                    except Exception as e:
+                        log_error(f"An unexpected error occurred while calling modify_epub_content for {target_epub_path}: {e}")
+                        log_debug(traceback.format_exc())
+
+    if not found_epub_files:
+        log_warning(f"No .epub files found directly in subdirectories of '{abs_epub_directory}'. Please ensure EPUBs are organized in story-specific subfolders (e.g. epubs/story-slug/file.epub).")
+    elif processed_count > 0:
+        log_success(f"Sentence removal process completed. Processed {processed_count} EPUB file(s).")
+    else:
+        log_info("Sentence removal process finished, but no EPUB files were processed (or none required modification based on current logic).")
+
 
 if __name__ == "__main__":
     app()

@@ -1,5 +1,6 @@
 import os
 import re
+from typing import List # Added this line
 from bs4 import BeautifulSoup, Comment
 import traceback # For more detailed error logging if needed
 
@@ -195,6 +196,45 @@ def process_story_chapters(input_story_folder: str, target_output_folder_for_sto
         print(f"\nNo chapter files were actually processed and saved for story '{story_name_for_log}'. Check input folder and file content quality.")
 
     print("Processing complete.")
+
+
+def remove_sentences_from_html_content(html_content: str, sentences_to_remove: List[str]) -> str:
+    """
+    Removes specified sentences from HTML content.
+
+    Args:
+        html_content: The HTML content string.
+        sentences_to_remove: A list of sentences to remove.
+
+    Returns:
+        The modified HTML content string.
+    """
+    if not html_content or not sentences_to_remove:
+        return html_content
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    for text_node in soup.find_all(string=True):
+        # Skip text nodes within <script> or <style> tags
+        if text_node.parent.name in ['script', 'style']:
+            continue
+
+        original_text = str(text_node)
+        modified_text = original_text
+        for sentence in sentences_to_remove:
+            if sentence in modified_text:
+                modified_text = modified_text.replace(sentence, "")
+        
+        if modified_text != original_text:
+            # If the text becomes empty, and it's not just whitespace,
+            # it's better to replace it with empty string to avoid issues.
+            # If the node becomes empty, it might be removed or handled by BS4.
+            if modified_text.strip() == "":
+                text_node.string.replace_with("")
+            else:
+                text_node.string.replace_with(modified_text)
+
+    return str(soup)
 
 
 if __name__ == '__main__':

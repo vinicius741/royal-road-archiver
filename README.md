@@ -172,6 +172,21 @@ python main.py <command> --help
     -   **Prerequisites**: Requires `credentials.json` to be set up as described in the "Google Drive Integration" section.
     -   The command will create a root folder named "RoyalRoad Archiver Backups" in your Google Drive, and then subfolders for each story slug.
 
+-   **`remove-sentences`**: Removes specified sentences from EPUB files.
+    ```bash
+    python main.py remove-sentences <JSON_SENTENCES_PATH> --dir <EPUB_DIRECTORY> --out <OUTPUT_DIRECTORY>
+    ```
+    -   `<JSON_SENTENCES_PATH>`: (Required) Path to a JSON file containing a list of sentences to remove.
+    -   `--dir <EPUB_DIRECTORY>` / `-d <EPUB_DIRECTORY>`: (Optional) Directory containing EPUB files to process. EPUBs are expected to be in story-specific subfolders (e.g., `epubs/story-slug/file.epub`). Default: `epubs`.
+    -   `--out <OUTPUT_DIRECTORY>` / `-o <OUTPUT_DIRECTORY>`: (Optional) Directory where modified EPUBs will be saved. If not provided, the original EPUB files are overwritten. The output directory will mirror the structure of the input directory (e.g., `modified_epubs/story-slug/file.epub`).
+    -   **JSON File Format:** The JSON file should contain a single list of strings. Each string is a sentence that will be removed from the text content of the EPUB files.
+        ```json
+        [
+            "This is an example sentence to be removed.",
+            "Another sentence that will be deleted from the EPUBs."
+        ]
+        ```
+
 ### Examples:
 
 1.  **Full process for a story from its overview page, using fetched metadata for EPUB:**
@@ -201,6 +216,16 @@ python main.py <command> --help
 5.  **Build an EPUB from processed chapters with specific metadata overrides:**
     ```bash
     python main.py build-epub processed_stories/my-awesome-story -c 0 --title "My Awesome Story - Full" --author "Story Author" --cover-url "http://example.com/cover.jpg" --description "A really cool story." --tags "Fantasy,Adventure,LitRPG" --publisher "My Self-Publishing"
+    ```
+
+6.  **Remove specific sentences from all EPUBs in the `epubs` directory, saving modified versions to `epubs_modified`:**
+    ```bash
+    python main.py remove-sentences path/to/sentences_to_remove.json --dir epubs --out epubs_modified
+    ```
+
+7.  **Remove specific sentences from EPUBs, overwriting the original files:**
+    ```bash
+    python main.py remove-sentences path/to/sentences_to_remove.json --dir my_collection_of_epubs
     ```
 
 ---
