@@ -30,7 +30,6 @@ def _infer_slug_from_url(url: str) -> Optional[str]:
         pass # Failed to infer
     return None
 
-def resolve_crawl_url_and_metadata(
 def resolve_crawl_url_and_metadata_logic(
     story_url_arg: str,
     start_chapter_url_param: Optional[str]
@@ -127,7 +126,7 @@ def resolve_crawl_url_and_metadata(
 
     return result['actual_crawl_start_url'], result['fetched_metadata'], result['initial_slug'], result['resolved_overview_url']
 
-def determine_story_slug_for_folders(
+def determine_story_slug_for_folders_logic(
     story_url_arg: str,
     start_chapter_url_param: Optional[str],
     fetched_metadata: Optional[Dict],
@@ -199,7 +198,7 @@ def determine_story_slug_for_folders(
 
     return result['story_slug']
 
-def finalize_epub_metadata(
+def finalize_epub_metadata_logic(
     title_param: Optional[str],
     author_param: Optional[str],
     cover_url_param: Optional[str],
