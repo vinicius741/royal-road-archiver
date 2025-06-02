@@ -188,11 +188,17 @@ class TestMetadataHelpers(unittest.TestCase):
                 break
         self.assertTrue(error_found, "Error message for save IOError not printed.")
 
+import core.crawler # To access METADATA_ROOT_FOLDER for patching
+
 class TestDownloadStoryIntegration(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.output_folder = self.temp_dir.name
+        self.chapters_temp_dir = tempfile.TemporaryDirectory() # For downloaded chapter files
+        self.output_folder = self.chapters_temp_dir.name # Passed to download_story for chapter output
 
+        self.metadata_temp_dir = tempfile.TemporaryDirectory() # For metadata_store
+        self.original_metadata_root_folder = core.crawler.METADATA_ROOT_FOLDER
+        core.crawler.METADATA_ROOT_FOLDER = self.metadata_temp_dir.name
+        
         # Mock data for a 3-chapter novel
         self.story_data = {
             "overview_url": "http://example.com/story/rend",
@@ -228,7 +234,9 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         }
 
     def tearDown(self):
-        self.temp_dir.cleanup()
+        self.chapters_temp_dir.cleanup()
+        self.metadata_temp_dir.cleanup()
+        core.crawler.METADATA_ROOT_FOLDER = self.original_metadata_root_folder # Restore
 
     def mock_download_chapter_html_side_effect(self, page_url: str):
         mock_response = MagicMock(spec=requests.Response)
@@ -279,8 +287,10 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         html_files = [f for f in os.listdir(story_output_path) if f.endswith(".html")]
         self.assertEqual(len(html_files), 3, f"Expected 3 HTML files, found: {html_files}")
 
-        # Assert that download_status.json was created
-        metadata_filepath = os.path.join(story_output_path, "download_status.json")
+        # Assert that download_status.json was created in the new metadata location
+        expected_metadata_dir = os.path.join(core.crawler.METADATA_ROOT_FOLDER, story_slug)
+        metadata_filepath = os.path.join(expected_metadata_dir, "download_status.json")
+        self.assertTrue(os.path.isdir(expected_metadata_dir))
         self.assertTrue(os.path.exists(metadata_filepath))
 
         # Load download_status.json and verify its contents
@@ -328,8 +338,11 @@ class TestDownloadStoryIntegration(unittest.TestCase):
             author_name=self.story_data["author_name"]
         )
 
-        story_output_path = os.path.join(self.output_folder, story_slug)
-        metadata_filepath = os.path.join(story_output_path, "download_status.json")
+        story_output_path = os.path.join(self.output_folder, story_slug) # Chapters path
+        
+        # Metadata path
+        expected_metadata_dir = os.path.join(core.crawler.METADATA_ROOT_FOLDER, story_slug)
+        metadata_filepath = os.path.join(expected_metadata_dir, "download_status.json")
         
         # Get content of metadata file after first run
         with open(metadata_filepath, 'r') as f:
@@ -371,11 +384,14 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         mock_parse_html.side_effect = self.mock_parse_chapter_html_side_effect
         story_slug = "rend-story-partial"
 
-        story_output_path = os.path.join(self.output_folder, story_slug)
-        os.makedirs(story_output_path, exist_ok=True) # Create the story-specific folder
+        # Chapter files go into self.output_folder/story_slug
+        story_chapters_path = os.path.join(self.output_folder, story_slug)
+        os.makedirs(story_chapters_path, exist_ok=True)
 
-        # 1. Create initial state: 1 chapter downloaded out of 3
-        metadata_filepath = os.path.join(story_output_path, "download_status.json")
+        # Metadata files go into METADATA_ROOT_FOLDER/story_slug
+        story_metadata_dir = os.path.join(core.crawler.METADATA_ROOT_FOLDER, story_slug)
+        os.makedirs(story_metadata_dir, exist_ok=True) # Ensure this path is created for pre-populating
+        metadata_filepath = os.path.join(story_metadata_dir, "download_status.json")
         
         initial_chapter_1_url = self.story_data["first_chapter_url"]
         initial_chapter_1_parsed = self.story_data["chapters_content"][initial_chapter_1_url]["parsed"]
@@ -387,7 +403,7 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         # Let's assume the sanitize function and counter make it "chapter_001_... .html"
         # For the test, the important part is that the metadata 'filename' matches an existing file.
         ch1_filename = f"chapter_001_chapter_1_the_beginning.html" # Matches title "Chapter 1: The Beginning"
-        ch1_filepath = os.path.join(story_output_path, ch1_filename)
+        ch1_filepath = os.path.join(story_chapters_path, ch1_filename) # Chapter file saved in chapters path
         with open(ch1_filepath, "w") as f:
             f.write("<html><body>Dummy Chapter 1</body></html>")
 
@@ -437,15 +453,11 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         self.assertNotIn("http://example.com/story/rend/chapter/1", parse_calls_urls)
 
 
-        # Chapter files for 2 and 3 created
-        html_files = [f for f in os.listdir(story_output_path) if f.endswith(".html")]
+        # Chapter files for 2 and 3 created in story_chapters_path
+        html_files = [f for f in os.listdir(story_chapters_path) if f.endswith(".html")]
         self.assertEqual(len(html_files), 3, "Should be 3 HTML files after resuming.") # ch1 (pre-existing) + ch2 + ch3
-        # Check specifically for chapter 2 and 3 files (name depends on sanitize and title)
-        # Example: "chapter_002_chapter_2_the_middle.html"
-        # Example: "chapter_003_chapter_3_the_end.html"
-        # More robust: check based on titles in metadata
         
-        with open(metadata_filepath, 'r') as f:
+        with open(metadata_filepath, 'r') as f: # metadata_filepath already points to new location
             final_metadata = json.load(f)
         
         self.assertEqual(len(final_metadata["chapters"]), 3)
@@ -456,9 +468,9 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         self.assertEqual(final_metadata["last_downloaded_url"], "http://example.com/story/rend/chapter/3")
         self.assertIsNone(final_metadata["next_expected_chapter_url"])
 
-        # Ensure chapter 2 and 3 files exist by checking their filenames from metadata
-        self.assertTrue(os.path.exists(os.path.join(story_output_path, final_metadata["chapters"][1]["filename"])))
-        self.assertTrue(os.path.exists(os.path.join(story_output_path, final_metadata["chapters"][2]["filename"])))
+        # Ensure chapter 2 and 3 files exist by checking their filenames from metadata (in chapters path)
+        self.assertTrue(os.path.exists(os.path.join(story_chapters_path, final_metadata["chapters"][1]["filename"])))
+        self.assertTrue(os.path.exists(os.path.join(story_chapters_path, final_metadata["chapters"][2]["filename"])))
 
     @patch('core.crawler._parse_chapter_html')
     @patch('core.crawler._download_chapter_html')
@@ -470,9 +482,13 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         mock_parse_html.side_effect = self.mock_parse_chapter_html_side_effect
         story_slug = "rend-story-updated"
 
-        story_output_path = os.path.join(self.output_folder, story_slug)
-        os.makedirs(story_output_path, exist_ok=True)
-        metadata_filepath = os.path.join(story_output_path, "download_status.json")
+        story_chapters_path = os.path.join(self.output_folder, story_slug) # For HTML files
+        os.makedirs(story_chapters_path, exist_ok=True)
+        
+        story_metadata_dir = os.path.join(core.crawler.METADATA_ROOT_FOLDER, story_slug) # For metadata
+        os.makedirs(story_metadata_dir, exist_ok=True)
+        metadata_filepath = os.path.join(story_metadata_dir, "download_status.json")
+
 
         # Initial state: Chapter 1 downloaded, but metadata indicates to check for Chapter 2 next.
         # This would happen if a previous run was interrupted after identifying ch2's URL.
@@ -480,8 +496,8 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         ch1_parsed = self.story_data["chapters_content"][ch1_url]["parsed"]
         ch1_filename = f"chapter_001_{story_slug}_ch1.html" # Simplified filename for test
         
-        # Create dummy file for chapter 1
-        with open(os.path.join(story_output_path, ch1_filename), "w") as f:
+        # Create dummy file for chapter 1 in the chapter download path
+        with open(os.path.join(story_chapters_path, ch1_filename), "w") as f:
             f.write("<html><body>Dummy Chapter 1 from initial download</body></html>")
 
         initial_metadata_updated_scenario = {
@@ -532,9 +548,9 @@ class TestDownloadStoryIntegration(unittest.TestCase):
         self.assertEqual(final_metadata["last_downloaded_url"], "http://example.com/story/rend/chapter/3")
         self.assertIsNone(final_metadata["next_expected_chapter_url"])
 
-        # Ensure new chapter files exist
-        self.assertTrue(os.path.exists(os.path.join(story_output_path, final_metadata["chapters"][1]["filename"])))
-        self.assertTrue(os.path.exists(os.path.join(story_output_path, final_metadata["chapters"][2]["filename"])))
+        # Ensure new chapter files exist in the chapter download path
+        self.assertTrue(os.path.exists(os.path.join(story_chapters_path, final_metadata["chapters"][1]["filename"])))
+        self.assertTrue(os.path.exists(os.path.join(story_chapters_path, final_metadata["chapters"][2]["filename"])))
 
 
 if __name__ == '__main__':

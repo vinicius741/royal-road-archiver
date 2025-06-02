@@ -12,6 +12,7 @@ from urllib.parse import urljoin # To build absolute URLs
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
+METADATA_ROOT_FOLDER = "metadata_store" # Centralized metadata storage
 
 def _load_download_status(metadata_filepath: str) -> dict:
     """
@@ -414,12 +415,17 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
     story_output_folder_final = os.path.join(output_folder, story_specific_folder_name)
 
     if not os.path.exists(story_output_folder_final):
-        print(f"Creating output folder for story: {story_output_folder_final}")
+        print(f"Creating output folder for story chapters: {story_output_folder_final}")
         os.makedirs(story_output_folder_final, exist_ok=True)
     else:
-        print(f"Using existing output folder for story: {story_output_folder_final}")
+        print(f"Using existing output folder for story chapters: {story_output_folder_final}")
 
-    metadata_filepath = os.path.join(story_output_folder_final, "download_status.json")
+    # New metadata path construction
+    story_specific_metadata_folder = os.path.join(METADATA_ROOT_FOLDER, story_specific_folder_name)
+    # The _save_download_status function will ensure story_specific_metadata_folder is created.
+    metadata_filepath = os.path.join(story_specific_metadata_folder, "download_status.json")
+    
+    print(f"Metadata will be loaded from/saved to: {metadata_filepath}") # For clarity
     metadata = _load_download_status(metadata_filepath)
 
     # Initial Metadata Setup (for new downloads)
