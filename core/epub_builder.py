@@ -2,8 +2,10 @@
 import os
 import requests
 from ebooklib import epub
+from ebooklib.epub import read_epub, EpubHtml, EpubNav # Added EpubHtml, EpubNav here
 from bs4 import BeautifulSoup
-from typing import Optional, List
+from typing import Optional, List # List is already here
+from core.processor import remove_sentences_from_html_content # Added this import
 import re
 import uuid  # For unique identifiers
 import datetime  # For publication date metadata
@@ -272,3 +274,74 @@ img, svg { max-width: 100%; height: auto; display: block; margin: 1em auto; bord
             print(f"Traceback for EPUB write error:\n{traceback.format_exc()}")
 
     print("\nEPUB generation process concluded.")
+
+
+def load_epub_for_modification(epub_file_path: str) -> Optional[epub.EpubBook]:
+    """Loads an EPUB file for modification.
+
+    Args:
+        epub_file_path: The path to the EPUB file.
+
+    Returns:
+        The EpubBook object if successful, None otherwise.
+    """
+    try:
+        book = read_epub(epub_file_path)
+        return book
+    except FileNotFoundError:
+        print(f"Error: EPUB file not found at {epub_file_path}")
+        return None
+    except epub.EpubException as e:
+        print(f"Error reading EPUB file {epub_file_path}: {e}")
+        return None
+
+
+def modify_epub_content(epub_path: str, sentences_to_remove: List[str]):
+    """Modifies the content of an EPUB file by removing specified sentences.
+
+    Args:
+        epub_path: The path to the EPUB file.
+        sentences_to_remove: A list of sentences to remove.
+    """
+    book = load_epub_for_modification(epub_path)
+    if not book:
+        print(f"Error: Could not load EPUB: {epub_path}")
+        return
+
+    modified = False
+    for item in book.get_items():
+        if isinstance(item, (EpubHtml, EpubNav)): # Check for EpubHtml or EpubHtmlNav
+            try:
+                original_html_content = item.get_content().decode('utf-8', errors='ignore')
+                modified_html_content = remove_sentences_from_html_content(original_html_content, sentences_to_remove)
+
+                if original_html_content != modified_html_content:
+                    item.set_content(modified_html_content.encode('utf-8'))
+                    modified = True
+            except Exception as e:
+                print(f"Error processing item {item.get_name()} in {epub_path}: {e}")
+
+    if modified:
+        output_epub_path = epub_path # Overwrite original file
+        # Optional: Backup original file
+        # backup_path = epub_path + ".bak"
+        # try:
+        #     os.rename(epub_path, backup_path)
+        #     print(f"Backup of original EPUB created at: {backup_path}")
+        # except OSError as e:
+        #     print(f"Error creating backup for {epub_path}: {e}. Proceeding without backup.")
+
+        try:
+            epub.write_epub(output_epub_path, book, {}) # epub.write_epub options can be added if needed
+            print(f"Successfully modified and saved EPUB: {output_epub_path}")
+        except Exception as e:
+            print(f"Error saving modified EPUB {output_epub_path}: {e}")
+            # Optional: Restore backup if saving failed
+            # if os.path.exists(backup_path):
+            #     try:
+            #         os.rename(backup_path, epub_path)
+            #         print(f"Restored original EPUB from backup: {epub_path}")
+            #     except OSError as re:
+            #         print(f"Error restoring backup for {epub_path}: {re}")
+    else:
+        print(f"No changes made to EPUB: {epub_path}")
