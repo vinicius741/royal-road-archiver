@@ -127,32 +127,53 @@ def upload_file_to_gdrive(service, local_filepath, gdrive_folder_id):
         return None
 
     filename = os.path.basename(local_filepath)
-    print(f"Uploading file '{filename}' to Google Drive folder ID: {gdrive_folder_id}...")
+    print(f"Processing file '{filename}' for Google Drive folder ID: {gdrive_folder_id}...")
 
-    file_metadata = {
-        'name': filename,
-        'parents': [gdrive_folder_id]
-    }
     media = MediaFileUpload(local_filepath, resumable=True)
     
     try:
-        file = service.files().create(body=file_metadata,
-                                      media_body=media,
-                                      fields='id, name').execute()
-        print(f"File '{file.get('name')}' uploaded successfully with ID: {file.get('id')}")
-        return file.get('id')
+        # Search for existing file
+        query = f"name='{filename}' and '{gdrive_folder_id}' in parents and trashed=false"
+        print(f"Searching for existing file with query: {query}")
+        response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        existing_files = response.get('files', [])
+
+        if existing_files:
+            existing_file = existing_files[0]
+            existing_file_id = existing_file.get('id')
+            print(f"Found existing file '{existing_file.get('name')}' with ID: {existing_file_id}. Updating it.")
+            
+            # Update existing file
+            updated_file = service.files().update(fileId=existing_file_id,
+                                                 media_body=media,
+                                                 fields='id, name').execute()
+            print(f"File '{updated_file.get('name')}' updated successfully with ID: {updated_file.get('id')}")
+            return updated_file.get('id')
+        else:
+            print(f"No existing file found with name '{filename}' in folder '{gdrive_folder_id}'. Creating new file.")
+            # Create new file
+            file_metadata = {
+                'name': filename,
+                'parents': [gdrive_folder_id]
+            }
+            new_file = service.files().create(body=file_metadata,
+                                          media_body=media,
+                                          fields='id, name').execute()
+            print(f"File '{new_file.get('name')}' created successfully with ID: {new_file.get('id')}")
+            return new_file.get('id')
+
     except HttpError as error:
-        print(f"An error occurred during file upload of '{filename}': {error}")
-        # Specific error handling based on error codes could be added here
+        print(f"An API error occurred during file operation for '{filename}': {error}")
         if error.resp.status == 401:
              print("Authentication error: Please ensure your token is valid or re-authenticate.")
         elif error.resp.status == 403:
-            print("Permission error: Ensure the authenticated user has permission to write to the target folder.")
+            print("Permission error: Ensure the authenticated user has permission for this operation on the target folder/file.")
         elif error.resp.status == 404:
-            print(f"Error: Google Drive folder with ID '{gdrive_folder_id}' not found.")
+            # This could be for the folder in create, or file in update.
+            print(f"Error: Google Drive folder with ID '{gdrive_folder_id}' not found, or file not found for update.")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred during file upload of '{filename}': {e}")
+        print(f"An unexpected error occurred during file operation for '{filename}': {e}")
         return None
 
 def upload_story_files(service, story_slug):
@@ -278,9 +299,60 @@ if __name__ == '__main__':
             if os.path.exists(os.path.join("metadata_store", test_story_slug)):
                 os.rmdir(os.path.join("metadata_store", test_story_slug)) # rmdir only if empty
             if os.path.exists("metadata_store"): # clean up "metadata_store" if it's empty
-                if not os.listdir("metadata_store"):
-                    os.rmdir("metadata_store")
+                if not os.listdir("metadata_store"): # Check if directory is empty
+                    try:
+                        os.rmdir("metadata_store")
+                    except OSError as e:
+                        print(f"Error removing metadata_store (it might not be empty or permissions issue): {e}")
+
             print(f"--- Finished testing upload_story_files for {test_story_slug} ---")
+
+            # --- Test Update/Replace Logic ---
+            print("\n--- Testing Update/Replace Logic ---")
+            update_test_story_slug = "test-update-logic-story"
+            update_test_epub_filename = "test_update_story.epub"
+            local_update_test_epub_dir = os.path.join("epubs", update_test_story_slug)
+            local_update_test_epub_path = os.path.join(local_update_test_epub_dir, update_test_epub_filename)
+
+            os.makedirs(local_update_test_epub_dir, exist_ok=True)
+
+            print(f"\n[Update Test] Step 1: Initial Upload for '{update_test_story_slug}'")
+            print(f"Creating dummy file: {local_update_test_epub_path} with initial content.")
+            with open(local_update_test_epub_path, "w") as f:
+                f.write("This is the first version of the test EPUB.")
+            
+            print("Calling upload_story_files. OBSERVE: Log messages should indicate a NEW file is being CREATED.")
+            upload_story_files(drive_service, update_test_story_slug)
+
+            print(f"\n[Update Test] Step 2: Modifying Local File for '{update_test_story_slug}'")
+            print(f"Modifying content of: {local_update_test_epub_path}")
+            with open(local_update_test_epub_path, "w") as f:
+                f.write("This is the **UPDATED** version of the test EPUB.")
+
+            print("Calling upload_story_files again. OBSERVE: Log messages should indicate an EXISTING file is being UPDATED.")
+            upload_story_files(drive_service, update_test_story_slug)
+
+            print(f"\n[Update Test] Step 3: Verification (Manual)")
+            print(f"Please manually check Google Drive in folder '{APP_ROOT_FOLDER_NAME}/{update_test_story_slug}'")
+            print(f"Verify that '{update_test_epub_filename}' exists and its content is the **UPDATED** version.")
+            # input("Press Enter to continue after manual verification...") # Optional: pause for manual check
+
+            print(f"\n--- Cleaning up test files for {update_test_story_slug} ---")
+            if os.path.exists(local_update_test_epub_path):
+                os.remove(local_update_test_epub_path)
+            if os.path.exists(local_update_test_epub_dir):
+                try:
+                    os.rmdir(local_update_test_epub_dir) # rmdir only if empty
+                except OSError as e:
+                     print(f"Note: Could not remove directory {local_update_test_epub_dir}. It might not be empty if other files were created (e.g. metadata). This is okay for this test's cleanup.")
+            
+            # Attempt to clean up the parent 'epubs' directory if it's empty
+            if os.path.exists("epubs") and not os.listdir("epubs"):
+                try:
+                    os.rmdir("epubs")
+                except OSError as e:
+                    print(f"Error removing epubs (it might not be empty or permissions issue): {e}")
+            print(f"--- Finished testing Update/Replace Logic for {update_test_story_slug} ---")
 
     except FileNotFoundError as e:
         print(f"Setup error: {e}. Ensure credentials.json is in the root or a placeholder is created.")
