@@ -19,3 +19,5 @@ my_story_rr/
 processed_stories/
 epubs/
 downloaded_stories/
+# Local test output for core/crawler.py direct execution
+downloaded_story_test_from_overview/
