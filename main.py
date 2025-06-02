@@ -260,10 +260,10 @@ def full_process_command(
         help="If True, preserves the downloaded and processed chapter folders. Defaults to False (deleting them)."
     ),
     sentence_removal_json_path: Optional[str] = typer.Option(
-        None,
+        "core/default_sentences_to_remove.json",
         "--remove-sentences-json",
         "-rsj",
-        help="Optional path to a JSON file with sentences to remove from the final EPUBs."
+        help="Optional path to a JSON file with sentences to remove from the final EPUBs. Defaults to core/default_sentences_to_remove.json containing a common boilerplate sentence."
     )
 ):
     """
@@ -335,6 +335,7 @@ def full_process_command(
         else:
             sentences_to_remove = None
             try:
+                log_info(f"Attempting to load sentences for removal from: {sentence_removal_json_path}")
                 with open(sentence_removal_json_path, 'r', encoding='utf-8') as f:
                     sentences_to_remove = json.load(f)
                 if not isinstance(sentences_to_remove, list) or not all(isinstance(s, str) for s in sentences_to_remove):
