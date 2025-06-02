@@ -2,3 +2,6 @@ typer
 requests
 beautifulsoup4
 ebooklib
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

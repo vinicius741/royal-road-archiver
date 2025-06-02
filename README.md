@@ -66,6 +66,42 @@ It's highly recommended to use a virtual environment to manage project dependenc
     ```
 
     This will install `typer` (for the CLI), `requests` (for HTTP requests), `beautifulsoup4` (for HTML parsing), and `EbookLib` (for EPUB creation).
+    The `requirements.txt` also includes Google API client libraries for the optional Google Drive upload feature.
+
+---
+
+## Google Drive Integration (Optional) 📤
+
+This tool allows you to back up your generated EPUB files and story metadata to Google Drive. To use this feature, you need to set up Google Cloud Platform credentials.
+
+### Setup Steps:
+
+1.  **Google Cloud Console**:
+    *   Go to the [Google Cloud Console](https://console.cloud.google.com/).
+    *   Create a new project or select an existing one.
+
+2.  **Enable Google Drive API**:
+    *   In the console, navigate to "APIs & Services" > "Library".
+    *   Search for "Google Drive API" and enable it for your project.
+
+3.  **Create OAuth 2.0 Credentials**:
+    *   Go to "APIs & Services" > "Credentials".
+    *   Click on "+ CREATE CREDENTIALS" and select "OAuth client ID".
+    *   For "Application type", choose "Desktop app".
+    *   Give your client a name (e.g., "RoyalRoad Archiver Desktop Client").
+    *   Click "Create".
+
+4.  **Download Credentials File**:
+    *   After the OAuth client ID is created, a dialog will show your Client ID and Client Secret. You can close this, and on the Credentials page, find your newly created Desktop client.
+    *   Click the download icon (⬇️) next to your OAuth 2.0 client ID.
+    *   This will download a JSON file (e.g., `client_secret_XXXX.json`).
+    *   **Rename this downloaded file to `credentials.json` and place it in the root directory of this `royal-road-archiver` project.**
+
+5.  **Important Security Note**:
+    *   The `credentials.json` file contains sensitive information. **Do NOT commit this file to version control (e.g., Git).** It should be listed in your `.gitignore` file.
+    *   The first time you run the `upload-to-gdrive` command, your web browser will open, asking you to authorize the application to access your Google Drive.
+    *   Upon successful authorization, a file named `token.json` will be created in the project's root directory. This file stores your access and refresh tokens, so the application doesn't need to ask for authorization every time.
+    *   The `token.json` file should also **NOT be committed to version control** and should be added to `.gitignore`.
 
 ---
 
@@ -125,6 +161,16 @@ python main.py <command> --help
     -   **Cleanup**: By default, after successfully generating the EPUB(s), the intermediate folders (`downloaded_stories/story-slug` and `processed_stories/story-slug`) are automatically deleted to save space.
     -   `--keep-intermediate-files`: (Optional) Add this flag if you want to preserve the downloaded (raw HTML) and processed (cleaned HTML) chapter folders. This can be useful for debugging or if you want to re-process or re-build EPUBs with different settings without re-downloading.
     -   Other options like `--author`, `--title`, `-c` are passed through to the respective steps. Metadata like cover, description, tags, and publisher are automatically fetched if an overview URL is provided. If you provide specific CLI options for author/title, they will override any fetched values.
+
+-   **`upload-to-gdrive`**: Uploads EPUB files and metadata for a story (or all stories) to your Google Drive.
+
+    ```bash
+    python main.py upload-to-gdrive <STORY_SLUG_OR_ALL>
+    ```
+
+    -   `<STORY_SLUG_OR_ALL>`: The slug of the story to upload (e.g., `my-awesome-story`). Alternatively, use `ALL` to upload all stories found in your local `epubs/` and `metadata_store/` directories.
+    -   **Prerequisites**: Requires `credentials.json` to be set up as described in the "Google Drive Integration" section.
+    -   The command will create a root folder named "RoyalRoad Archiver Backups" in your Google Drive, and then subfolders for each story slug.
 
 ### Examples:
 
@@ -186,6 +232,34 @@ If you want to run the tests:
     ```bash
     python tests/test_main.py 
     ```
+
+---
+
+## .gitignore recommendation
+
+Ensure your `.gitignore` file includes at least the following to protect sensitive information and avoid committing unnecessary files:
+
+```gitignore
+# Python virtual environment
+.venv/
+venv/
+env/
+*.pyc
+__pycache__/
+
+# Credentials and tokens
+credentials.json
+token.json
+
+# Downloaded and processed data (optional, if you don't want to commit them)
+# downloaded_stories/
+# processed_stories/
+# epubs/
+
+# IDE specific
+.vscode/
+.idea/
+```
 
 ---
 *Disclaimer: This tool is for personal use only to archive stories for offline reading. Please support the authors on Royal Road by reading their work on the platform and through any monetization options they provide.*
