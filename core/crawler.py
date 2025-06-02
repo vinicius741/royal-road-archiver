@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
+from datetime import datetime # For timestamps
 import time
 import re # To clean filenames
 from urllib.parse import urljoin # To build absolute URLs
@@ -11,6 +12,52 @@ from urllib.parse import urljoin # To build absolute URLs
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
+METADATA_ROOT_FOLDER = "metadata_store" # Centralized metadata storage
+
+def _load_download_status(metadata_filepath: str) -> dict:
+    """
+    Loads the download status from a JSON metadata file.
+    Returns a default structure if the file doesn't exist or is corrupt.
+    """
+    default_status = {
+        "overview_url": None,
+        "story_title": None,
+        "author_name": None,
+        "last_downloaded_url": None,
+        "next_expected_chapter_url": None,
+        "chapters": [] # List of dicts: {'url': str, 'title': str, 'filename': str, 'downloaded_at': str}
+    }
+    if not os.path.exists(metadata_filepath):
+        return default_status
+    try:
+        with open(metadata_filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            # Basic validation, can be expanded
+            if not isinstance(data, dict) or "chapters" not in data:
+                print(f"   WARNING: Metadata file {metadata_filepath} has unexpected structure. Resetting.")
+                return default_status
+            return data
+    except json.JSONDecodeError:
+        print(f"   WARNING: Corrupt metadata file: {metadata_filepath}. Resetting to default.")
+        return default_status
+    except IOError as e:
+        print(f"   ERROR reading metadata file {metadata_filepath}: {e}. Returning default.")
+        return default_status
+
+def _save_download_status(metadata_filepath: str, data: dict):
+    """
+    Saves the download status to a JSON metadata file.
+    """
+    try:
+        # Ensure the directory exists before trying to save the file
+        os.makedirs(os.path.dirname(metadata_filepath), exist_ok=True)
+        with open(metadata_filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print(f"   Download status saved to: {metadata_filepath}")
+    except IOError as e:
+        print(f"   ERROR saving download status to {metadata_filepath}: {e}")
+    except Exception as ex:
+        print(f"   UNEXPECTED ERROR saving download status to {metadata_filepath}: {ex}")
 
 def _download_page_html(page_url: str) -> requests.Response | None:
     """
@@ -45,6 +92,7 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
 
     soup = BeautifulSoup(response.text, 'html.parser')
     metadata = {
+        'overview_url': overview_url, # Added overview_url
         'first_chapter_url': None,
         'story_title': "Unknown Title",
         'author_name': "Unknown Author",
@@ -345,13 +393,11 @@ def _sanitize_filename(filename: str) -> str:
     return sanitized[:100] # Keeps the first 100 characters
 
 
-def download_story(first_chapter_url: str, output_folder: str, story_slug_override: str = None):
+def download_story(first_chapter_url: str, output_folder: str, story_slug_override: str = None, overview_url: str = None, story_title: str = None, author_name: str = None):
     """
-    Downloads all chapters of a Royal Road story, starting from the first chapter URL.
+    Downloads all chapters of a story, starting from the first chapter URL,
+    and manages download progress using a metadata file.
     """
-    story_output_folder = output_folder # By default, saves directly to the provided output folder
-                                        # which should already be the story-specific folder.
-
     if story_slug_override:
         story_specific_folder_name = _sanitize_filename(story_slug_override)
     else:
@@ -366,69 +412,106 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
 
     # The 'output_folder' passed to download_story should already be the base
     # where the story folder (story_specific_folder_name) will be created or used.
-    # Ex: output_folder = "downloaded_stories"
-    #     story_output_folder_final = "downloaded_stories/my-story-slug"
-
     story_output_folder_final = os.path.join(output_folder, story_specific_folder_name)
 
     if not os.path.exists(story_output_folder_final):
-        print(f"Creating output folder for chapters: {story_output_folder_final}")
+        print(f"Creating output folder for story chapters: {story_output_folder_final}")
         os.makedirs(story_output_folder_final, exist_ok=True)
     else:
-        print(f"Using existing output folder for chapters: {story_output_folder_final}")
+        print(f"Using existing output folder for story chapters: {story_output_folder_final}")
+
+    # New metadata path construction
+    story_specific_metadata_folder = os.path.join(METADATA_ROOT_FOLDER, story_specific_folder_name)
+    # The _save_download_status function will ensure story_specific_metadata_folder is created.
+    metadata_filepath = os.path.join(story_specific_metadata_folder, "download_status.json")
+    
+    print(f"Metadata will be loaded from/saved to: {metadata_filepath}") # For clarity
+    metadata = _load_download_status(metadata_filepath)
+
+    # Initial Metadata Setup (for new downloads)
+    if metadata.get('overview_url') is None and overview_url:
+        metadata['overview_url'] = overview_url
+    if metadata.get('story_title') is None and story_title:
+        metadata['story_title'] = story_title
+    if metadata.get('author_name') is None and author_name:
+        metadata['author_name'] = author_name
+    # Save initial metadata if it was just populated
+    if overview_url or story_title or author_name:
+         _save_download_status(metadata_filepath, metadata)
 
 
-    current_chapter_url = first_chapter_url
-    chapter_number = 1
+    # Determine Start URL
+    current_chapter_url = first_chapter_url # Default to first_chapter_url
+    if metadata.get('next_expected_chapter_url') and isinstance(metadata['next_expected_chapter_url'], str) and metadata['next_expected_chapter_url'].strip():
+        print(f"Resuming download from: {metadata['next_expected_chapter_url']}")
+        current_chapter_url = metadata['next_expected_chapter_url']
+    else:
+        print(f"Starting new download from: {first_chapter_url}")
+        metadata['chapters'] = [] # Ensure chapters list is clean if not resuming
+
+    chapter_number_counter = len(metadata.get('chapters', [])) + 1
 
     while current_chapter_url:
-        print(f"\nDownloading chapter {chapter_number}...")
+        print(f"\nProcessing chapter {chapter_number_counter} (URL: {current_chapter_url})...")
 
+        # Existing Chapter Check
+        found_entry = None
+        for entry in metadata.get('chapters', []):
+            if entry.get('url') == current_chapter_url:
+                found_entry = entry
+                break
+        
+        if found_entry:
+            print(f"   Chapter already downloaded: {found_entry.get('filename', 'N/A')}. Skipping.")
+            current_chapter_url = found_entry.get('next_url_from_page') # Use the next URL stored at the time of its download
+            if not current_chapter_url:
+                print("   No further link found from this previously downloaded chapter. Ending process for this story.")
+                break
+            time.sleep(0.1) # Short delay
+            # No chapter_number_counter increment here as we are skipping to the *next* one.
+            # The next iteration will handle the new current_chapter_url.
+            continue
+
+        # Download & Parse
         response = _download_chapter_html(current_chapter_url)
         if not response:
-            print(f"Failed to download chapter {chapter_number} from {current_chapter_url}.")
-            # Decide whether to stop or try to skip. For now, we stop.
+            print(f"   Failed to download chapter {chapter_number_counter} from {current_chapter_url}.")
+            metadata['next_expected_chapter_url'] = current_chapter_url # Save current URL to resume later
+            _save_download_status(metadata_filepath, metadata)
             break
 
-        # Adds a simple check to make sure the content is HTML
         content_type = response.headers.get('content-type', '').lower()
         if 'text/html' not in content_type:
-            print(f"   WARNING: Content downloaded from {current_chapter_url} does not appear to be HTML (Content-Type: {content_type}). Attempting to process anyway.")
-            # Could be an error or a file (e.g., image) linked as the next chapter.
-            # If it's a common error (e.g., page not found that didn't return 404),
-            # parse_chapter_html might fail gracefully.
+            print(f"   WARNING: Content from {current_chapter_url} is not HTML (Content-Type: {content_type}). Skipping.")
+            # Potentially save this URL as 'problematic' or 'skipped' in metadata if needed
+            metadata['next_expected_chapter_url'] = None # Or decide how to handle
+            _save_download_status(metadata_filepath, metadata)
+            break 
 
         chapter_data = _parse_chapter_html(response.text, current_chapter_url)
+        parsed_title = chapter_data['title']
+        parsed_content_html = chapter_data['content_html']
+        next_chapter_link_on_page = chapter_data['next_chapter_url']
 
-        title = chapter_data['title']
-        content_html = chapter_data['content_html']
-        next_url = chapter_data['next_chapter_url']
+        # Filename Generation
+        if parsed_title == "Unknown Title" and chapter_number_counter == 1 and story_slug_override:
+             final_title = story_slug_override.replace('-', ' ').title() + f" - Chapter {chapter_number_counter}"
+        elif parsed_title == "Unknown Title":
+            final_title = f"Chapter {chapter_number_counter}"
+        else:
+            final_title = parsed_title
 
-        # If the title is "Unknown Title" and the chapter number is 1,
-        # try using the story slug name as a more descriptive title.
-        if title == "Unknown Title" and chapter_number == 1 and story_slug_override:
-            title = story_slug_override.replace('-', ' ').title() + " - Chapter 1"
+        print(f"   Chapter Title: {final_title}")
 
-
-        print(f"   Chapter Title: {title}")
-        if not next_url:
-            print("   Next chapter link not found on this page.")
-
-
-        # Sanitize the title to use as part of the filename
-        safe_title = _sanitize_filename(title if title else f"chapter_{chapter_number:03d}")
-        # Ensures the filename is not excessively long and has a number.
-        filename_base = f"chapter_{chapter_number:03d}_{safe_title}"
-        filename = f"{filename_base[:150]}.html" # Also limits the total filename length
-
+        safe_title_segment = _sanitize_filename(final_title if final_title else f"chapter_{chapter_number_counter:03d}")
+        filename = f"chapter_{chapter_number_counter:03d}_{safe_title_segment[:100]}.html"
         filepath = os.path.join(story_output_folder_final, filename)
 
+        # Save Chapter File
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
-                # Writes a basic HTML structure for the chapter
                 f.write("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
-                f.write(f"  <meta charset=\"UTF-8\">\n  <title>{title if title else 'Chapter ' + str(chapter_number)}</title>\n")
-                # Adds simple CSS for better readability if opened directly
+                f.write(f"  <meta charset=\"UTF-8\">\n  <title>{final_title}</title>\n")
                 f.write("  <style>\n")
                 f.write("    body { font-family: sans-serif; margin: 20px; line-height: 1.6; }\n")
                 f.write("    .chapter-content { max-width: 800px; margin: 0 auto; padding: 1em; }\n")
@@ -436,33 +519,51 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
                 f.write("    p { margin-bottom: 1em; }\n")
                 f.write("  </style>\n")
                 f.write("</head>\n<body>\n")
-                f.write(f"<h1>{title if title else 'Chapter ' + str(chapter_number)}</h1>\n")
-                f.write(content_html) # content_html is already an HTML string
+                f.write(f"<h1>{final_title}</h1>\n")
+                f.write(parsed_content_html)
                 f.write("\n</body>\n</html>")
             print(f"   Saved to: {filepath}")
         except IOError as e:
-            print(f"   ERROR saving file {filepath}: {e}")
-            # Decide whether to stop or continue to the next chapter
-            # For now, let's continue
+            print(f"   ERROR saving file {filepath}: {e}. Will attempt to resume from this chapter next time.")
+            metadata['next_expected_chapter_url'] = current_chapter_url
+            _save_download_status(metadata_filepath, metadata)
+            break 
         except Exception as ex:
-            print(f"   UNEXPECTED ERROR saving file {filepath}: {ex}")
+            print(f"   UNEXPECTED ERROR saving file {filepath}: {ex}. Will attempt to resume from this chapter next time.")
+            metadata['next_expected_chapter_url'] = current_chapter_url
+            _save_download_status(metadata_filepath, metadata)
+            break
 
+        # Update Metadata
+        new_chapter_info = {
+            "url": current_chapter_url,
+            "title": parsed_title, # Store the original parsed title
+            "filename": filename,
+            "download_timestamp": datetime.utcnow().isoformat() + "Z",
+            "next_url_from_page": next_chapter_link_on_page, # Next link as found on *this* page
+            "download_order": chapter_number_counter
+        }
+        metadata['chapters'].append(new_chapter_info)
+        metadata['last_downloaded_url'] = current_chapter_url
+        metadata['next_expected_chapter_url'] = next_chapter_link_on_page
+        _save_download_status(metadata_filepath, metadata)
 
-        current_chapter_url = next_url
+        # Advance to Next Chapter
+        current_chapter_url = next_chapter_link_on_page
 
         if not current_chapter_url:
-            print("\nEnd of story reached (next chapter not found or invalid URL).")
+            print("\nEnd of story reached (next chapter link was not found or was invalid).")
             break
+        
+        # Check for loop on same URL
+        if response and current_chapter_url == response.url:
+             print(f"\nWARNING: Next chapter URL ({current_chapter_url}) is the same as the current page. Stopping to avoid loop.")
+             metadata['next_expected_chapter_url'] = None # Prevent trying this again
+             _save_download_status(metadata_filepath, metadata)
+             break
 
-        # Checks if the next chapter URL is the same as the current one to avoid infinite loops
-        if current_chapter_url == response.url:
-            print(f"\nWARNING: Next chapter URL ({current_chapter_url}) is the same as the current page. Stopping to avoid loop.")
-            break
-
-        chapter_number += 1
-
-        # Delay to avoid overloading the server
-        delay = random.uniform(1.5, 3.5) # seconds, randomized
+        chapter_number_counter += 1
+        delay = random.uniform(1.5, 3.5)
         print(f"   Waiting {delay:.1f} seconds before next chapter...")
         time.sleep(delay)
 
@@ -472,8 +573,9 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
 
 if __name__ == '__main__':
     # Quick test for fetch_story_metadata_and_first_chapter
-    test_overview_url = "https://www.royalroad.com/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed" # User example URL
-    # test_overview_url = "https://www.royalroad.com/fiction/76844/the-final-wish-a-litrpg-adventure" # Another example
+    # test_overview_url = "https://www.royalroad.com/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed" # User example URL
+    test_overview_url = "https://www.royalroad.com/fiction/76844/the-final-wish-a-litrpg-adventure" # Another example
+    # test_overview_url = "https://www.royalroad.com/fiction/21220/mother-of-learning" # MoL
     print(f"Starting metadata fetch test for: {test_overview_url}")
     metadata = fetch_story_metadata_and_first_chapter(test_overview_url)
     if metadata:
@@ -489,7 +591,14 @@ if __name__ == '__main__':
 
             print(f"\nStarting download test for: {metadata['first_chapter_url']}")
             # Passes test_output_base_folder, and download_story will create the slug subfolder within it.
-            downloaded_to = download_story(metadata['first_chapter_url'], test_output_base_folder, story_slug_override=metadata['story_slug'])
+            downloaded_to = download_story(
+                first_chapter_url=metadata['first_chapter_url'],
+                output_folder=test_output_base_folder,
+                story_slug_override=metadata['story_slug'],
+                overview_url=test_overview_url, # Pass the new param
+                story_title=metadata['story_title'], # Pass the new param
+                author_name=metadata['author_name'] # Pass the new param
+            )
             print(f"Test download completed. Chapters in: {downloaded_to}")
         else:
             print("\nCould not test download, incomplete metadata (first chapter URL or slug missing).")

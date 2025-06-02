@@ -30,7 +30,6 @@ def _infer_slug_from_url(url: str) -> Optional[str]:
         pass # Failed to infer
     return None
 
-def resolve_crawl_url_and_metadata(
 def resolve_crawl_url_and_metadata_logic(
     story_url_arg: str,
     start_chapter_url_param: Optional[str]
@@ -43,16 +42,21 @@ def resolve_crawl_url_and_metadata_logic(
     fetched_metadata: Optional[Dict] = None
     actual_crawl_start_url: Optional[str] = None
     initial_slug: Optional[str] = None
+    resolved_overview_url: Optional[str] = None
 
     if is_overview_url(story_url_arg):
         logs.append({'level': 'info', 'message': f"Story URL '{story_url_arg}' detected as overview. Fetching metadata..."})
+        resolved_overview_url = story_url_arg # story_url_arg is the overview URL
         metadata_result = fetch_story_metadata_and_first_chapter(story_url_arg)
         if not metadata_result:
             logs.append({'level': 'warning', 'message': f"Warning: Failed to fetch metadata from {story_url_arg}. Proceeding with potentially limited info."})
+            # In this case, fetched_metadata remains None, but resolved_overview_url is still story_url_arg
         else:
             fetched_metadata = metadata_result
             initial_slug = fetched_metadata.get('story_slug')
-            logs.append({'level': 'info', 'message': f"Metadata fetched. Initial slug: '{initial_slug}', First chapter from meta: '{fetched_metadata.get('first_chapter_url')}'"})
+            # overview_url should now be part of metadata_result directly
+            # resolved_overview_url = fetched_metadata.get('overview_url', story_url_arg) # Ensure it's set
+            logs.append({'level': 'info', 'message': f"Metadata fetched. Initial slug: '{initial_slug}', First chapter from meta: '{fetched_metadata.get('first_chapter_url')}', Overview URL from meta: '{fetched_metadata.get('overview_url')}'"})
 
         if start_chapter_url_param:
             actual_crawl_start_url = start_chapter_url_param
@@ -66,11 +70,19 @@ def resolve_crawl_url_and_metadata_logic(
                 'actual_crawl_start_url': None,
                 'fetched_metadata': fetched_metadata,
                 'initial_slug': initial_slug,
+                'resolved_overview_url': resolved_overview_url,
                 'logs': logs
             } # Error case
 
     else: # story_url_arg is a chapter URL
         logs.append({'level': 'info', 'message': f"Story URL '{story_url_arg}' detected as a chapter page."})
+        # If it's a chapter URL, we don't have an immediate overview URL unless metadata is fetched later
+        # For now, resolved_overview_url remains None. It might be populated if metadata is fetched
+        # based on some other logic, but this function primarily handles the direct story_url_arg.
+        # The task implies download_story will get it, so if it's not an overview_url,
+        # fetch_story_metadata_and_first_chapter won't be called here.
+        # This means resolved_overview_url will be None if a chapter URL is given.
+        # This seems to be the intended logic: overview_url is only resolved if story_url_arg is an overview.
         if start_chapter_url_param:
             actual_crawl_start_url = start_chapter_url_param
             logs.append({'level': 'info', 'message': f"Using user-specified start chapter URL: {actual_crawl_start_url}"})
@@ -89,16 +101,18 @@ def resolve_crawl_url_and_metadata_logic(
         'actual_crawl_start_url': actual_crawl_start_url,
         'fetched_metadata': fetched_metadata,
         'initial_slug': initial_slug,
+        'resolved_overview_url': resolved_overview_url, # Added
         'logs': logs
     }
 
 def resolve_crawl_url_and_metadata(
     story_url_arg: str,
     start_chapter_url_param: Optional[str]
-) -> Tuple[Optional[str], Optional[Dict], Optional[str]]:
+) -> Tuple[Optional[str], Optional[Dict], Optional[str], Optional[str]]:
     """
     Determines the actual URL to start crawling from and fetches metadata if applicable.
     This function now calls the _logic version and handles CLI output.
+    Returns: actual_crawl_start_url, fetched_metadata, initial_slug, resolved_overview_url
     """
     result = resolve_crawl_url_and_metadata_logic(story_url_arg, start_chapter_url_param)
 
@@ -110,9 +124,9 @@ def resolve_crawl_url_and_metadata(
         elif log_entry['level'] == 'error':
             typer.secho(log_entry['message'], fg=typer.colors.RED)
 
-    return result['actual_crawl_start_url'], result['fetched_metadata'], result['initial_slug']
+    return result['actual_crawl_start_url'], result['fetched_metadata'], result['initial_slug'], result['resolved_overview_url']
 
-def determine_story_slug_for_folders(
+def determine_story_slug_for_folders_logic(
     story_url_arg: str,
     start_chapter_url_param: Optional[str],
     fetched_metadata: Optional[Dict],
@@ -184,7 +198,7 @@ def determine_story_slug_for_folders(
 
     return result['story_slug']
 
-def finalize_epub_metadata(
+def finalize_epub_metadata_logic(
     title_param: Optional[str],
     author_param: Optional[str],
     cover_url_param: Optional[str],

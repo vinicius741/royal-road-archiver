@@ -52,7 +52,7 @@ def crawl_story_command(
     typer.echo(f"Starting crawl command for story URL: {story_url}")
     abs_output_folder = _ensure_base_folder(output_folder)
 
-    crawl_entry_point_url, fetched_metadata, initial_slug = resolve_crawl_url_and_metadata(
+    crawl_entry_point_url, fetched_metadata, initial_slug, resolved_overview_url = resolve_crawl_url_and_metadata(
         story_url_arg=story_url,
         start_chapter_url_param=start_chapter_url
     )
@@ -74,9 +74,12 @@ def crawl_story_command(
 
     try:
         downloaded_story_path = download_story(
-            first_chapter_url=crawl_entry_point_url, 
-            output_folder=abs_output_folder, 
-            story_slug_override=story_slug_for_folder
+            first_chapter_url=crawl_entry_point_url,
+            output_folder=abs_output_folder,
+            story_slug_override=story_slug_for_folder,
+            overview_url=resolved_overview_url,
+            story_title=fetched_metadata.get('story_title') if fetched_metadata else "Unknown Title",
+            author_name=fetched_metadata.get('author_name') if fetched_metadata else "Unknown Author"
         )
         if downloaded_story_path:
             typer.secho(f"\nDownload of raw HTML files completed successfully at: {downloaded_story_path}", fg=typer.colors.GREEN)
@@ -278,7 +281,10 @@ def full_process_command(
     story_specific_download_folder = _run_download_step(
         actual_crawl_start_url=init_data['actual_crawl_start_url'],
         abs_download_base_folder=init_data['abs_download_base_folder'],
-        story_slug_for_folders=init_data['story_slug_for_folders']
+        story_slug_for_folders=init_data['story_slug_for_folders'],
+        resolved_overview_url=init_data['resolved_overview_url'],
+        story_title=init_data['final_story_title'], # Using finalized title
+        author_name=init_data['final_author_name']  # Using finalized author
     )
 
     # --- 2. Process Step ---
@@ -331,7 +337,7 @@ def _initialize_full_process(
     abs_epub_base_folder = _ensure_base_folder(epub_base_folder_name)
     
     typer.echo(f"\n--- Step 0: Initializing and resolving URLs/metadata from {story_url} ---")
-    actual_crawl_start_url, fetched_metadata, initial_slug = resolve_crawl_url_and_metadata(
+    actual_crawl_start_url, fetched_metadata, initial_slug, resolved_overview_url = resolve_crawl_url_and_metadata(
         story_url_arg=story_url,
         start_chapter_url_param=start_chapter_url
     )
@@ -340,10 +346,18 @@ def _initialize_full_process(
         typer.secho("Critical: Could not determine a valid URL to start crawling for full-process. Exiting.", fg=typer.colors.RED)
         # Return a dictionary indicating failure to the main command
         return {
-            "actual_crawl_start_url": None, 
+            "actual_crawl_start_url": None,
+            "resolved_overview_url": None, # Ensure all expected keys are present on failure
+            "story_slug_for_folders": None,
             "abs_download_base_folder": abs_download_base_folder,
             "abs_processed_base_folder": abs_processed_base_folder,
-            "abs_epub_base_folder": abs_epub_base_folder
+            "abs_epub_base_folder": abs_epub_base_folder,
+            "final_story_title": "Unknown Title",
+            "final_author_name": "Unknown Author",
+            "final_cover_url": None,
+            "final_description": None,
+            "final_tags": [],
+            "final_publisher": None
         }
 
     story_slug_for_folders = determine_story_slug_for_folders(
@@ -376,21 +390,28 @@ def _initialize_full_process(
         "final_cover_url": final_cover_url,
         "final_description": final_description,
         "final_tags": final_tags,
-        "final_publisher": final_publisher
+        "final_publisher": final_publisher,
+        "resolved_overview_url": resolved_overview_url # Added
     }
 
 def _run_download_step(
     actual_crawl_start_url: str,
     abs_download_base_folder: str,
-    story_slug_for_folders: str
+    story_slug_for_folders: str,
+    resolved_overview_url: Optional[str], # New
+    story_title: str, # New
+    author_name: str # New
 ) -> str:
     """Handles Step 1: Downloading chapters."""
     story_specific_download_folder = os.path.join(abs_download_base_folder, story_slug_for_folders)
     try:
         returned_download_path = download_story(
-            actual_crawl_start_url, 
-            abs_download_base_folder, 
-            story_slug_override=story_slug_for_folders
+            first_chapter_url=actual_crawl_start_url,
+            output_folder=abs_download_base_folder,
+            story_slug_override=story_slug_for_folders,
+            overview_url=resolved_overview_url,
+            story_title=story_title,
+            author_name=author_name
         )
         if not returned_download_path or not os.path.isdir(returned_download_path):
             typer.secho(f"Error: Download step did not return a valid directory path. Expected: '{story_specific_download_folder}', Got: '{returned_download_path}'", fg=typer.colors.RED)
