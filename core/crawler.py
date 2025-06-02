@@ -1,14 +1,16 @@
 import random
 import requests
+# BeautifulSoup import will be removed after refactoring fetch_story_metadata_and_first_chapter
 from bs4 import BeautifulSoup
 import os
 import json
 from datetime import datetime # For timestamps
 import time
-import re # To clean filenames
-from urllib.parse import urljoin # To build absolute URLs
+# import re # No longer explicitly used in this file after refactoring
+from urllib.parse import urljoin
 
 from core.logging_utils import log_info, log_warning, log_error, log_debug, log_success
+from .html_parser import parse_story_metadata_from_html, parse_chapter_data_from_html, _sanitize_filename as _sanitize_filename_parser
 
 # Header to simulate a browser and avoid simple blocks
 HEADERS = {
@@ -89,202 +91,62 @@ def fetch_story_metadata_and_first_chapter(overview_url: str) -> dict | None:
     log_info(f"Fetching metadata from overview page: {overview_url}")
     response = _download_page_html(overview_url)
     if not response:
-        log_error("Failed to download the overview page.")
+        log_error("Failed to download the overview page.", url=overview_url)
         return None
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    metadata = {
-        'overview_url': overview_url, # Added overview_url
-        'first_chapter_url': None,
-        'story_title': "Unknown Title",
-        'author_name': "Unknown Author",
-        'story_slug': None,
-        'cover_image_url': None,
-        'description': None,
-        'tags': [],
-        'publisher': None
-    }
+    # Delegate parsing to the new html_parser function
+    # Note: parse_story_metadata_from_html returns a more comprehensive metadata dict
+    # including title, author, slug, cover_image_url, description, tags, publisher, story_id
+    parsed_metadata = parse_story_metadata_from_html(overview_url, response.text)
 
-    # Attempt to parse JSON-LD
-    json_ld_data = None
-    script_tag_ld = soup.find('script', type='application/ld+json')
-    if script_tag_ld:
-        try:
-            json_ld_data = json.loads(script_tag_ld.string)
-        except json.JSONDecodeError as e:
-            log_warning(f"Error parsing JSON-LD: {e}")
+    # The crucial part that REMAINS in crawler.py: finding the first chapter URL
+    # This logic is specific to how a crawler navigates a site, not just parsing a single page's content.
+    first_chapter_url = None
+    soup = BeautifulSoup(response.text, 'html.parser') # Still need soup for this specific task
 
-    # Extract cover_image_url
-    og_image_tag = soup.find('meta', property='og:image')
-    if og_image_tag and og_image_tag.get('content'):
-        metadata['cover_image_url'] = og_image_tag['content']
-    else:
-        twitter_image_tag = soup.find('meta', attrs={'name': 'twitter:image'})
-        if twitter_image_tag and twitter_image_tag.get('content'):
-            metadata['cover_image_url'] = twitter_image_tag['content']
-        elif json_ld_data and isinstance(json_ld_data.get('image'), str):
-            metadata['cover_image_url'] = json_ld_data['image']
-        elif json_ld_data and isinstance(json_ld_data.get('image'), dict) and isinstance(json_ld_data['image'].get('url'), str):
-            metadata['cover_image_url'] = json_ld_data['image']['url'] # Handle cases where image is an object
-        elif json_ld_data and isinstance(json_ld_data.get('image'), list) and len(json_ld_data['image']) > 0:
-             # Handle cases where image is a list of images, take the first one
-            first_image = json_ld_data['image'][0]
-            if isinstance(first_image, str):
-                 metadata['cover_image_url'] = first_image
-            elif isinstance(first_image, dict) and isinstance(first_image.get('url'), str):
-                 metadata['cover_image_url'] = first_image['url']
-
-
-    # Extract description
-    og_description_tag = soup.find('meta', property='og:description')
-    if og_description_tag and og_description_tag.get('content'):
-        metadata['description'] = og_description_tag['content']
-    else:
-        twitter_description_tag = soup.find('meta', attrs={'name': 'twitter:description'})
-        if twitter_description_tag and twitter_description_tag.get('content'):
-            metadata['description'] = twitter_description_tag['content']
-        elif json_ld_data and isinstance(json_ld_data.get('description'), str):
-            metadata['description'] = json_ld_data['description']
-
-    # Extract tags
-    tags_list = []
-    keywords_tag = soup.find('meta', attrs={'name': 'keywords'})
-    if keywords_tag and keywords_tag.get('content'):
-        tags_list.extend([tag.strip() for tag in keywords_tag['content'].split(',') if tag.strip()])
-
-    if json_ld_data:
-        if isinstance(json_ld_data.get('genre'), str):
-            tags_list.append(json_ld_data['genre'].strip())
-        elif isinstance(json_ld_data.get('genre'), list):
-            tags_list.extend([g.strip() for g in json_ld_data['genre'] if isinstance(g, str) and g.strip()])
-        # Also check for keywords in JSON-LD as some sites might use it
-        if isinstance(json_ld_data.get('keywords'), str):
-            tags_list.extend([tag.strip() for tag in json_ld_data['keywords'].split(',') if tag.strip()])
-        elif isinstance(json_ld_data.get('keywords'), list):
-            tags_list.extend([k.strip() for k in json_ld_data['keywords'] if isinstance(k, str) and k.strip()])
-
-
-    if tags_list:
-        metadata['tags'] = sorted(list(set(tags_list))) # Keep unique tags and sort them
-
-    # Extract publisher
-    if json_ld_data and isinstance(json_ld_data.get('publisher'), dict) and isinstance(json_ld_data['publisher'].get('name'), str):
-        metadata['publisher'] = json_ld_data['publisher']['name'].strip()
-    elif json_ld_data and isinstance(json_ld_data.get('sourceOrganization'), dict) and isinstance(json_ld_data['sourceOrganization'].get('name'), str): # Common alternative
-        metadata['publisher'] = json_ld_data['sourceOrganization']['name'].strip()
-
-
-    # Extrair URL do primeiro capítulo
-    # Look for the "Start Reading" button or similar that leads to the first chapter
-    # <a href="/fiction/115305/pioneer-of-the-abyss-an-underwater-livestreamed/chapter/2251704/b1-chapter-1" class="btn btn-lg btn-primary">
     start_reading_link = soup.select_one('a.btn.btn-primary[href*="/chapter/"]')
     if start_reading_link and start_reading_link.get('href'):
         relative_url = start_reading_link['href']
-        metadata['first_chapter_url'] = urljoin(overview_url, relative_url)
-        log_info(f"First chapter URL found: {metadata['first_chapter_url']}")
+        first_chapter_url = urljoin(overview_url, relative_url)
+        log_info(f"First chapter URL found (button): {first_chapter_url}", url=overview_url)
     else:
-        log_warning("First chapter URL not found on overview page.")
-        # Tries to find in the chapter table if the button doesn't exist
+        log_warning("First chapter URL (button) not found on overview page. Trying table fallback.", url=overview_url)
         first_chapter_row_link = soup.select_one('table#chapters tbody tr[data-url] a')
         if first_chapter_row_link and first_chapter_row_link.get('href'):
             relative_url = first_chapter_row_link['href']
-            metadata['first_chapter_url'] = urljoin(overview_url, relative_url)
-            log_info(f"First chapter URL (table fallback) found: {metadata['first_chapter_url']}")
+            first_chapter_url = urljoin(overview_url, relative_url)
+            log_info(f"First chapter URL (table fallback) found: {first_chapter_url}", url=overview_url)
         else:
-            log_error("CRITICAL ERROR: Could not find the first chapter URL.")
-            return None # Essential to continue
+            log_error("CRITICAL: Could not find the first chapter URL on the overview page.", url=overview_url)
+            # Return None because without the first chapter URL, crawling cannot proceed for this story.
+            # The parsed_metadata might have some info, but it's incomplete for crawling purposes.
+            return None
 
-    # Extrair título da história
-    # <h1 class="font-white">Pioneer of the Abyss: An Underwater Livestreamed Isekai LitRPG</h1>
-    title_tag = soup.select_one('div.fic-title h1.font-white')
-    if title_tag:
-        metadata['story_title'] = title_tag.text.strip()
-        log_info(f"Story title found: {metadata['story_title']}")
-    else:
-        # Fallback to the page's <title> tag
-        page_title_tag = soup.find('title')
-        if page_title_tag:
-            # Ex: "Pioneer of the Abyss: An Underwater Livestreamed Isekai LitRPG | Royal Road"
-            full_title = page_title_tag.text.strip()
-            metadata['story_title'] = full_title.split('|')[0].strip() # Takes the part before the pipe
-            log_info(f"Story title (title tag fallback) found: {metadata['story_title']}")
-        else:
-            log_warning("Story title not found.")
-
-
-    # Extrair nome do autor
-    # <span><a href="/profile/102324" class="font-white">WolfShine</a></span>
-    author_link = soup.select_one('div.fic-title h4 span a[href*="/profile/"]')
-    if author_link:
-        metadata['author_name'] = author_link.text.strip()
-        log_info(f"Author name found: {metadata['author_name']}")
-    else:
-        # Fallback: Try to find in the JSON LD schema
-        script_tag = soup.find('script', type='application/ld+json')
-        if json_ld_data: # Use pre-parsed json_ld_data
-            try:
-                # Check if author is a string (some schemas might have simple name string)
-                if isinstance(json_ld_data.get('author'), str):
-                    metadata['author_name'] = json_ld_data['author'].strip()
-                    log_info(f"Author name (JSON-LD fallback - string) found: {metadata['author_name']}")
-                # Check if author is a dictionary (standard)
-                elif isinstance(json_ld_data.get('author'), dict) and json_ld_data['author'].get('name'):
-                    metadata['author_name'] = json_ld_data['author']['name'].strip()
-                    log_info(f"Author name (JSON-LD fallback - object) found: {metadata['author_name']}")
-                # Check if author is a list of authors (take the first one)
-                elif isinstance(json_ld_data.get('author'), list) and len(json_ld_data['author']) > 0:
-                    first_author = json_ld_data['author'][0]
-                    if isinstance(first_author, str):
-                         metadata['author_name'] = first_author.strip()
-                         log_info(f"Author name (JSON-LD fallback - list of strings) found: {metadata['author_name']}")
-                    elif isinstance(first_author, dict) and first_author.get('name'):
-                        metadata['author_name'] = first_author['name'].strip()
-                        log_info(f"Author name (JSON-LD fallback - list of objects) found: {metadata['author_name']}")
-            except Exception as e: # Catch any unexpected errors during processing
-                log_warning(f"Error processing JSON-LD for author name: {e}")
-        if metadata['author_name'] == "Unknown Author": # If still not found
-            log_warning("Author name not found.")
+    # Combine the parsed metadata with the first_chapter_url
+    # The parse_story_metadata_from_html already includes overview_url, story_title, author_name, story_slug etc.
+    # So, we just need to add/update the first_chapter_url.
+    final_metadata = parsed_metadata
+    final_metadata['first_chapter_url'] = first_chapter_url
+    
+    # Ensure essential fields for downstream processing are present, even if from parser they were None/default
+    if not final_metadata.get('story_title') or final_metadata['story_title'] == "Unknown Title":
+        log_warning("Story title is unknown after parsing. Downstream processes might be affected.", url=overview_url)
+    
+    if not final_metadata.get('story_slug'):
+        # If html_parser couldn't make a good slug (e.g. no title, no story_id),
+        # crawler.py can try its own more complex logic based on URLs if needed,
+        # or use a timestamp as a last resort.
+        # The current html_parser's slug generation is quite robust, so this might be less necessary.
+        # For now, we rely on the slug from html_parser. If it's None, it will be handled by `download_story`.
+        log_warning(f"Story slug is None or generic after parsing: {final_metadata.get('story_slug')}. This might be handled by download_story.", url=overview_url)
 
 
-    # Extract story slug from the first chapter URL (more reliable)
-    if metadata['first_chapter_url']:
-        try:
-            # Ex: https://www.royalroad.com/fiction/12345/some-story/chapter/123456/chapter-one
-            # We want "some-story"
-            parts = metadata['first_chapter_url'].split('/fiction/')
-            if len(parts) > 1:
-                slug_part = parts[1].split('/')
-                if len(slug_part) > 1:
-                     metadata['story_slug'] = _sanitize_filename(slug_part[1]) # slug_part[0] is the fiction ID
-                     log_info(f"Story slug (from chapter URL) found: {metadata['story_slug']}")
-        except IndexError:
-            pass # Leaves slug as None if extraction fails
+    # The new parser already handles story_id extraction from overview_url.
+    # It also handles slug generation. If the slug is still None or generic,
+    # download_story has its own fallbacks.
 
-    if not metadata['story_slug']: # Fallback to the overview URL
-        try:
-            parts = overview_url.split('/fiction/')
-            if len(parts) > 1:
-                slug_part = parts[1].split('/')
-                if len(slug_part) > 1: # /fiction/ID/slug/...
-                    metadata['story_slug'] = _sanitize_filename(slug_part[1])
-                    log_info(f"Story slug (from overview URL) found: {metadata['story_slug']}")
-                elif len(slug_part) == 1 and slug_part[0]: # /fiction/ID (if there's no slug in the URL)
-                    # In this case, the title can be a good alternative for the folder name
-                    metadata['story_slug'] = _sanitize_filename(metadata['story_title'])
-                    log_info(f"Story slug (title fallback) used: {metadata['story_slug']}")
-
-        except IndexError:
-            log_warning("Could not extract story slug from overview URL. Using title.")
-            metadata['story_slug'] = _sanitize_filename(metadata['story_title'])
-
-    if not metadata['story_slug'] or metadata['story_slug'] == "unknown-title":
-        # Last resort, use a generic name if everything fails
-        timestamp_slug = f"story_{int(time.time())}"
-        log_warning(f"Story slug could not be determined, using generic slug: {timestamp_slug}")
-        metadata['story_slug'] = timestamp_slug
-
-
-    return metadata
+    log_info(f"Successfully fetched and processed metadata for: {final_metadata.get('story_title', 'N/A')}", url=overview_url)
+    return final_metadata
 
 
 def _download_chapter_html(chapter_url: str) -> requests.Response | None:
@@ -299,101 +161,11 @@ def _parse_chapter_html(html_content: str, current_page_url: str) -> dict:
     """
     Parses the raw HTML of a chapter and extracts title, content, and next chapter URL.
     """
-    soup = BeautifulSoup(html_content, 'html.parser')
+    # Delegate parsing entirely to the new html_parser function
+    log_debug(f"Delegating chapter parsing to parse_chapter_data_from_html for URL: {current_page_url}")
+    return parse_chapter_data_from_html(html_content, current_page_url)
 
-    # Título do Capítulo
-    # Attempt 1: By the specific h1 in the fiction header on the chapter page
-    title_tag_h1_specific = soup.select_one('div.fic-header h1.font-white.break-word, h1.break-word[property="name"]')
-    # Attempt 2: By the h1 inside div.chapter-content (if the previous crawler saved it this way)
-    title_tag_chapter_content = soup.select_one('div.chapter-content h1')
-    # Attempt 3: By the most prominent h1 on the chapter page
-    title_tag_general_h1 = soup.find('h1')
-    # Attempt 4: By the page's <title> tag
-    page_title_tag = soup.find('title')
-
-    title = "Unknown Title"
-
-    if title_tag_h1_specific:
-        title = title_tag_h1_specific.text.strip()
-    elif title_tag_chapter_content:
-        title = title_tag_chapter_content.text.strip()
-    elif title_tag_general_h1:
-        title = title_tag_general_h1.text.strip()
-    elif page_title_tag:
-        # Ex: "Chapter Title - Story Name | Royal Road" ou "Chapter Title | Royal Road"
-        title_text = page_title_tag.text.split('|')[0].strip()
-        # Removes the story name if present, common in page titles
-        # This is heuristic and may need adjustment.
-        # We will try to remove " - Story Name" if it exists.
-        # If the story title could be passed here, it would be more robust.
-        parts = title_text.split(' - ')
-        if len(parts) > 1 and len(parts[0]) < len(parts[1]): # Heuristic: chapter title is shorter
-            title = parts[0].strip()
-        else:
-            title = title_text
-
-    # Conteúdo da História
-    content_div = soup.find('div', class_='chapter-content')
-    if not content_div: # Fallback for some different structures
-        content_div = soup.find('div', class_='prose') # Example of another content class
-    content_html = str(content_div) if content_div else "<p>Content not found.</p>"
-
-    # Link do Próximo Capítulo
-    next_chapter_url = None
-    # Priority for rel="next" link
-    next_link_tag_rel = soup.find('link', rel='next')
-    if next_link_tag_rel and next_link_tag_rel.get('href'):
-        relative_url = next_link_tag_rel['href']
-        next_chapter_url = urljoin(current_page_url, relative_url)
-    else:
-        # Fallback for "Next", "Próximo", etc. buttons (more comprehensive)
-        # Selects links containing "Next" or "Próximo" in text, prioritizing button classes
-        next_buttons = soup.select('a.btn[href], a.button[href], a[class*="next" i][href]')
-        found_button = False
-        for button in next_buttons:
-            button_text = button.text.strip().lower()
-            if "next" in button_text or "próximo" in button_text or "proximo" in button_text:
-                relative_url = button['href']
-                if relative_url and relative_url != "#" and "javascript:void(0)" not in relative_url:
-                    next_chapter_url = urljoin(current_page_url, relative_url)
-                    found_button = True
-                    break
-        # If not found with specific selector, try a more generic text search
-        if not found_button:
-            all_links = soup.find_all('a', href=True)
-            for link in all_links:
-                link_text = link.text.strip().lower()
-                if ("next" in link_text or "próximo" in link_text or "proximo" in link_text) and \
-                   ("previous" not in link_text and "anterior" not in link_text): # Avoid "previous" links
-                    relative_url = link['href']
-                    if relative_url and relative_url != "#" and "javascript:void(0)" not in relative_url:
-                        # Additional check to avoid non-chapter links
-                        # (ex: /comment/next, /forum/next)
-                        if '/chapter/' in relative_url or '/fiction/' in relative_url or re.match(r'.*/\d+/?$', relative_url):
-                             next_chapter_url = urljoin(current_page_url, relative_url)
-                             break
-
-
-    return {
-        'title': title,
-        'content_html': content_html,
-        'next_chapter_url': next_chapter_url
-    }
-
-def _sanitize_filename(filename: str) -> str:
-    """
-    Removes invalid characters from a filename and shortens it if necessary.
-    """
-    # Removes characters that are problematic in filenames
-    sanitized = re.sub(r'[\\/*?:"<>|]', "", filename)
-    # Replaces multiple spaces or tabs with a single underscore
-    sanitized = re.sub(r'\s+', '_', sanitized)
-    # Removes dots at the beginning or end, and multiple dots
-    sanitized = re.sub(r'^\.|\.$', '', sanitized)
-    sanitized = re.sub(r'\.{2,}', '.', sanitized)
-    # Limits length to avoid excessively long filenames
-    return sanitized[:100] # Keeps the first 100 characters
-
+# _sanitize_filename is now imported from html_parser, so the local definition is removed.
 
 def download_story(first_chapter_url: str, output_folder: str, story_slug_override: str = None, overview_url: str = None, story_title: str = None, author_name: str = None):
     """
@@ -401,16 +173,33 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
     and manages download progress using a metadata file.
     """
     if story_slug_override:
-        story_specific_folder_name = _sanitize_filename(story_slug_override)
+        story_specific_folder_name = _sanitize_filename_parser(story_slug_override)
     else:
         # Tries to extract the slug from the URL if not provided
+        # This logic might be simplified if html_parser.parse_story_metadata_from_html provides a reliable slug
+        # based on overview_url, which can be passed as story_slug_override.
+        # For now, retain this as a fallback if story_slug_override is not given.
         try:
-            story_specific_folder_name = first_chapter_url.split('/fiction/')[1].split('/')[1]
-            story_specific_folder_name = _sanitize_filename(story_specific_folder_name)
+            # Example: /fiction/12345/story-slug/chapter/... -> story-slug
+            slug_parts = first_chapter_url.split('/fiction/')
+            if len(slug_parts) > 1:
+                sub_path = slug_parts[1] # e.g., "12345/story-slug/chapter/..."
+                # Take the part after the ID, before the next segment (usually 'chapter')
+                # This assumes a structure like /fiction/ID/SLUG/...
+                potential_slug = sub_path.split('/')[1]
+                if potential_slug and potential_slug != "chapter": # Basic check
+                     story_specific_folder_name = _sanitize_filename_parser(potential_slug)
+                else: # Fallback if slug extraction is not clean
+                    story_specific_folder_name = _sanitize_filename_parser(story_title if story_title else f"story_{int(time.time())}")
+                    log_warning(f"Could not clearly extract story slug from first_chapter_url, used title or timestamp: {story_specific_folder_name}", url=first_chapter_url)
+            else: # Fallback if /fiction/ not in URL or structure is different
+                story_specific_folder_name = _sanitize_filename_parser(story_title if story_title else f"story_{int(time.time())}")
+                log_warning(f"Could not extract story slug from first_chapter_url using /fiction/ delimiter, used title or timestamp: {story_specific_folder_name}", url=first_chapter_url)
+
         except IndexError:
             # If extraction fails, uses a generic time-based name for the subfolder
-            story_specific_folder_name = f"story_{int(time.time())}"
-            log_warning(f"Could not extract story name from URL, using generic slug for folder: {story_specific_folder_name}")
+            story_specific_folder_name = f"story_{int(time.time())}" # _sanitize_filename_parser not strictly needed here as it's time based
+            log_warning(f"Failed to extract story name from first_chapter_url, using generic slug for folder: {story_specific_folder_name}", url=first_chapter_url)
 
     # The 'output_folder' passed to download_story should already be the base
     # where the story folder (story_specific_folder_name) will be created or used.
@@ -505,7 +294,7 @@ def download_story(first_chapter_url: str, output_folder: str, story_slug_overri
 
         log_info(f"Chapter Title: {final_title}")
 
-        safe_title_segment = _sanitize_filename(final_title if final_title else f"chapter_{chapter_number_counter:03d}")
+        safe_title_segment = _sanitize_filename_parser(final_title if final_title else f"chapter_{chapter_number_counter:03d}")
         filename = f"chapter_{chapter_number_counter:03d}_{safe_title_segment[:100]}.html"
         filepath = os.path.join(story_output_folder_final, filename)
 
@@ -579,31 +368,42 @@ if __name__ == '__main__':
     test_overview_url = "https://www.royalroad.com/fiction/76844/the-final-wish-a-litrpg-adventure" # Another example
     # test_overview_url = "https://www.royalroad.com/fiction/21220/mother-of-learning" # MoL
     log_info(f"Starting metadata fetch test for: {test_overview_url}")
-    metadata = fetch_story_metadata_and_first_chapter(test_overview_url)
-    if metadata:
-        log_info("\nMetadata found:")
-        for key, value in metadata.items(): # Convert to log_debug or remove
-            log_debug(f"  {key}: {value}")
+    fetched_data = fetch_story_metadata_and_first_chapter(test_overview_url) # Renamed 'metadata' to 'fetched_data' for clarity
+    if fetched_data:
+        log_info("\nFetched data (metadata + first chapter URL):")
+        for key, value in fetched_data.items():
+            log_debug(f"  {key}: {value}") # Use log_debug for verbose output, or remove loop
 
         # Quick test for download_story (optional, this would usually go in main.py)
-        if metadata.get('first_chapter_url') and metadata.get('story_slug'):
+        # Ensure that the keys used here match what `fetch_story_metadata_and_first_chapter` now returns
+        # It should return a dictionary containing 'first_chapter_url' and 'story_slug' from the parsed metadata.
+        first_chapter_url_test = fetched_data.get('first_chapter_url')
+        story_slug_test = fetched_data.get('story_slug') # This comes from parse_story_metadata_from_html
+        story_title_test = fetched_data.get('story_title')
+        author_name_test = fetched_data.get('author_name')
+
+
+        if first_chapter_url_test and story_slug_test:
             test_output_base_folder = "downloaded_story_test_from_overview"
             if not os.path.exists(test_output_base_folder):
                 os.makedirs(test_output_base_folder, exist_ok=True)
 
-            log_info(f"\nStarting download test for: {metadata['first_chapter_url']}")
+            log_info(f"\nStarting download test for: {first_chapter_url_test} (Slug: {story_slug_test})")
             # Passes test_output_base_folder, and download_story will create the slug subfolder within it.
             downloaded_to = download_story(
-                first_chapter_url=metadata['first_chapter_url'],
+                first_chapter_url=first_chapter_url_test,
                 output_folder=test_output_base_folder,
-                story_slug_override=metadata['story_slug'],
-                overview_url=test_overview_url, # Pass the new param
-                story_title=metadata['story_title'], # Pass the new param
-                author_name=metadata['author_name'] # Pass the new param
+                story_slug_override=story_slug_test, # Use the slug from fetched_data
+                overview_url=test_overview_url, 
+                story_title=story_title_test, 
+                author_name=author_name_test 
             )
             log_success(f"Test download completed. Chapters in: {downloaded_to}")
         else:
-            log_warning("\nCould not test download, incomplete metadata (first chapter URL or slug missing).")
+            log_warning("\nCould not test download, incomplete fetched data (first_chapter_url or story_slug missing).")
+            if not first_chapter_url_test: log_warning("Missing: first_chapter_url_test")
+            if not story_slug_test: log_warning(f"Missing: story_slug_test (current value: {story_slug_test})")
+
 
     else:
-        log_error("\nMetadata fetch test failed.")
+        log_error("\nMetadata fetch test failed (fetch_story_metadata_and_first_chapter returned None).")

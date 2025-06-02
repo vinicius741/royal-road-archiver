@@ -13,7 +13,8 @@ from core.cli_helpers import (
     determine_story_slug_for_folders,
     finalize_epub_metadata,
 )
-from core.epub_builder import modify_epub_content # Added for remove-sentences
+# from core.epub_builder import modify_epub_content # Old import
+from core.epub_modifier import modify_epub_content # New import for sentence removal
 from core.gdrive_uploader import authenticate_gdrive, upload_story_files, APP_ROOT_FOLDER_NAME
 import json # Added for remove-sentences
 

@@ -4,7 +4,8 @@ import tempfile
 import shutil
 import json
 from ebooklib import epub
-from core.epub_builder import modify_epub_content, load_epub_for_modification
+# from core.epub_builder import modify_epub_content, load_epub_for_modification # Old import
+from core.epub_modifier import modify_epub_content, load_epub_for_modification # New import
 
 # ASSET_DIR will be set up to point to tests/assets
 ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets")
