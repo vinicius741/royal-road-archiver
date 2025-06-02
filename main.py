@@ -258,6 +258,72 @@ def full_process_command(
     """
     download_base_folder_name = "downloaded_stories"
     processed_base_folder_name = "processed_stories"
+    """
+    Performs the full sequence: download, process, and build EPUB.
+    """
+    
+    init_data = _initialize_full_process(
+        story_url=story_url,
+        start_chapter_url=start_chapter_url,
+        story_title_param=story_title_param,
+        author_name_param=author_name_param
+    )
+
+    if not init_data.get("actual_crawl_start_url"): # Check for critical failure from init
+        # Error message already printed by _initialize_full_process
+        raise typer.Exit(code=1)
+
+    # --- 1. Download Step ---
+    typer.echo(f"\n--- Step 1: Downloading chapters starting from {init_data['actual_crawl_start_url']} ---")
+    story_specific_download_folder = _run_download_step(
+        actual_crawl_start_url=init_data['actual_crawl_start_url'],
+        abs_download_base_folder=init_data['abs_download_base_folder'],
+        story_slug_for_folders=init_data['story_slug_for_folders']
+    )
+
+    # --- 2. Process Step ---
+    typer.echo(f"\n--- Step 2: Processing story chapters from {story_specific_download_folder} ---")
+    story_specific_processed_folder = _run_process_step(
+        story_specific_download_folder=story_specific_download_folder,
+        abs_processed_base_folder=init_data['abs_processed_base_folder'],
+        story_slug_for_folders=init_data['story_slug_for_folders']
+    )
+
+    # --- 3. Build EPUB Step ---
+    typer.echo(f"\n--- Step 3: Building EPUB(s) from {story_specific_processed_folder} ---")
+    story_specific_epub_output_folder = _run_build_epub_step(
+        story_specific_processed_folder=story_specific_processed_folder,
+        abs_epub_base_folder=init_data['abs_epub_base_folder'],
+        story_slug_for_folders=init_data['story_slug_for_folders'],
+        chapters_per_epub=chapters_per_epub,
+        final_author_name=init_data['final_author_name'],
+        final_story_title=init_data['final_story_title'],
+        final_cover_url=init_data['final_cover_url'],
+        final_description=init_data['final_description'],
+        final_tags=init_data['final_tags'],
+        final_publisher=init_data['final_publisher']
+    )
+
+    # --- 4. Cleanup Step ---
+    _run_cleanup_step(
+        keep_intermediate_files=keep_intermediate_files,
+        story_specific_download_folder=story_specific_download_folder,
+        story_specific_processed_folder=story_specific_processed_folder
+    )
+
+    typer.secho("\n--- Full process completed! ---", fg=typer.colors.CYAN)
+
+
+# Helper functions for full_process_command
+def _initialize_full_process(
+    story_url: str,
+    start_chapter_url: Optional[str],
+    story_title_param: Optional[str],
+    author_name_param: Optional[str]
+) -> dict:
+    """Handles Step 0: Initialization, folder setup, URL resolving, metadata finalization."""
+    download_base_folder_name = "downloaded_stories"
+    processed_base_folder_name = "processed_stories"
     epub_base_folder_name = "epubs"
 
     abs_download_base_folder = _ensure_base_folder(download_base_folder_name)
@@ -272,89 +338,131 @@ def full_process_command(
 
     if not actual_crawl_start_url:
         typer.secho("Critical: Could not determine a valid URL to start crawling for full-process. Exiting.", fg=typer.colors.RED)
-        raise typer.Exit(code=1)
+        # Return a dictionary indicating failure to the main command
+        return {
+            "actual_crawl_start_url": None, 
+            "abs_download_base_folder": abs_download_base_folder,
+            "abs_processed_base_folder": abs_processed_base_folder,
+            "abs_epub_base_folder": abs_epub_base_folder
+        }
 
     story_slug_for_folders = determine_story_slug_for_folders(
         story_url_arg=story_url,
         start_chapter_url_param=start_chapter_url,
         fetched_metadata=fetched_metadata,
         initial_slug_from_resolve=initial_slug,
-        title_param=story_title_param
+        title_param=story_title_param # This is story_title_param from full_process_command
     )
 
     final_story_title, final_author_name, final_cover_url, final_description, final_tags, final_publisher = finalize_epub_metadata(
-        title_param=story_title_param,
-        author_param=author_name_param,
-        # These new params for finalize_epub_metadata are for CLI overrides,
-        # which are not yet added to full_process_command. For now, they are None.
+        title_param=story_title_param, # This is story_title_param from full_process_command
+        author_param=author_name_param, # This is author_name_param from full_process_command
         cover_url_param=None, 
         description_param=None,
-        tags_param=None, # This is a string for finalize_epub_metadata, not a list yet
+        tags_param=None, 
         publisher_param=None,
         fetched_metadata=fetched_metadata,
         story_slug=story_slug_for_folders
     )
 
-    # --- 1. Download Step ---
-    typer.echo(f"\n--- Step 1: Downloading chapters starting from {actual_crawl_start_url} ---")
+    return {
+        "actual_crawl_start_url": actual_crawl_start_url,
+        "story_slug_for_folders": story_slug_for_folders,
+        "abs_download_base_folder": abs_download_base_folder,
+        "abs_processed_base_folder": abs_processed_base_folder,
+        "abs_epub_base_folder": abs_epub_base_folder,
+        "final_story_title": final_story_title,
+        "final_author_name": final_author_name,
+        "final_cover_url": final_cover_url,
+        "final_description": final_description,
+        "final_tags": final_tags,
+        "final_publisher": final_publisher
+    }
+
+def _run_download_step(
+    actual_crawl_start_url: str,
+    abs_download_base_folder: str,
+    story_slug_for_folders: str
+) -> str:
+    """Handles Step 1: Downloading chapters."""
     story_specific_download_folder = os.path.join(abs_download_base_folder, story_slug_for_folders)
     try:
-        # download_story creates the story_specific_download_folder using story_slug_for_folders
         returned_download_path = download_story(
             actual_crawl_start_url, 
-            abs_download_base_folder, # Base folder for downloads
+            abs_download_base_folder, 
             story_slug_override=story_slug_for_folders
         )
         if not returned_download_path or not os.path.isdir(returned_download_path):
             typer.secho(f"Error: Download step did not return a valid directory path. Expected: '{story_specific_download_folder}', Got: '{returned_download_path}'", fg=typer.colors.RED)
             raise typer.Exit(code=1)
-        # Use the returned path as it's confirmed by the crawler
         story_specific_download_folder = returned_download_path 
         typer.secho(f"Download successful. Raw content in: {story_specific_download_folder}", fg=typer.colors.GREEN)
+        return story_specific_download_folder
     except Exception as e:
         typer.secho(f"An error occurred during the download step: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
         raise typer.Exit(code=1)
 
-    # --- 2. Process Step ---
-    typer.echo(f"\n--- Step 2: Processing story chapters from {story_specific_download_folder} ---")
+def _run_process_step(
+    story_specific_download_folder: str,
+    abs_processed_base_folder: str,
+    story_slug_for_folders: str
+) -> str:
+    """Handles Step 2: Processing story chapters."""
     story_specific_processed_folder = os.path.join(abs_processed_base_folder, story_slug_for_folders)
-    # Ensure the specific target folder for processed files exists before calling process.
     _ensure_base_folder(story_specific_processed_folder)
     try:
         process_story_chapters(story_specific_download_folder, story_specific_processed_folder)
-        if not os.path.isdir(story_specific_processed_folder): # Double check
+        if not os.path.isdir(story_specific_processed_folder): 
              typer.secho(f"Error: Processed story folder '{story_specific_processed_folder}' was not created/found after processing.", fg=typer.colors.RED)
              raise typer.Exit(code=1)
         typer.secho(f"Processing successful. Cleaned content in: {story_specific_processed_folder}", fg=typer.colors.GREEN)
+        return story_specific_processed_folder
     except Exception as e:
         typer.secho(f"An error occurred during the processing step: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
         raise typer.Exit(code=1)
 
-    # --- 3. Build EPUB Step ---
-    typer.echo(f"\n--- Step 3: Building EPUB(s) from {story_specific_processed_folder} ---")
+def _run_build_epub_step(
+    story_specific_processed_folder: str,
+    abs_epub_base_folder: str,
+    story_slug_for_folders: str,
+    chapters_per_epub: int,
+    final_author_name: str,
+    final_story_title: str,
+    final_cover_url: Optional[str],
+    final_description: Optional[str],
+    final_tags: list,
+    final_publisher: Optional[str]
+) -> str:
+    """Handles Step 3: Building EPUB(s)."""
     story_specific_epub_output_folder = os.path.join(abs_epub_base_folder, story_slug_for_folders)
     _ensure_base_folder(story_specific_epub_output_folder)
     try:
         build_epubs_for_story(
             input_folder=story_specific_processed_folder,
             output_folder=story_specific_epub_output_folder,  
-            chapters_per_epub=chapters_per_epub, # Pass directly
+            chapters_per_epub=chapters_per_epub, 
             author_name=final_author_name,
             story_title=final_story_title,
             cover_image_url=final_cover_url,
             story_description=final_description,
-            tags=final_tags, # This is already a list from finalize_epub_metadata
+            tags=final_tags, 
             publisher_name=final_publisher
         )
         typer.secho(f"EPUB generation process finished. Files should be in: {story_specific_epub_output_folder}", fg=typer.colors.GREEN)
+        return story_specific_epub_output_folder
     except Exception as e:
         typer.secho(f"An error occurred during the EPUB building step: {e}", fg=typer.colors.RED)
         typer.echo(traceback.format_exc())
         raise typer.Exit(code=1)
 
-    # --- 4. Cleanup Step ---
+def _run_cleanup_step(
+    keep_intermediate_files: bool,
+    story_specific_download_folder: str,
+    story_specific_processed_folder: str
+):
+    """Handles Step 4: Cleaning up intermediate files."""
     if not keep_intermediate_files:
         typer.echo("\n--- Step 4: Cleaning up intermediate files ---")
         try:
@@ -376,9 +484,6 @@ def full_process_command(
         typer.echo("\n--- Step 4: Skipping cleanup of intermediate files as per --keep-intermediate-files option. ---")
         typer.echo(f"Raw download folder retained at: {story_specific_download_folder}")
         typer.echo(f"Processed content folder retained at: {story_specific_processed_folder}")
-
-    typer.secho("\n--- Full process completed! ---", fg=typer.colors.CYAN)
-
 
 if __name__ == "__main__":
     app()
