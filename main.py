@@ -12,6 +12,7 @@ from core.cli_helpers import (
     determine_story_slug_for_folders,
     finalize_epub_metadata,
 )
+from core.gdrive_uploader import authenticate_gdrive, upload_story_files, APP_ROOT_FOLDER_NAME
 
 app = typer.Typer(help="CLI for downloading and processing stories from Royal Road.", no_args_is_help=True)
 
@@ -505,6 +506,70 @@ def _run_cleanup_step(
         typer.echo("\n--- Step 4: Skipping cleanup of intermediate files as per --keep-intermediate-files option. ---")
         typer.echo(f"Raw download folder retained at: {story_specific_download_folder}")
         typer.echo(f"Processed content folder retained at: {story_specific_processed_folder}")
+
+
+@app.command(name="upload-to-gdrive")
+def upload_to_gdrive_command(
+    story_slug_or_all: str = typer.Argument(
+        ...,
+        help="The slug of the story to upload, or 'ALL' to upload all stories found in the 'epubs' and 'metadata_store' directories."
+    )
+):
+    """
+    Uploads EPUB files and download_status.json for a story (or all stories) to Google Drive.
+    Ensure 'credentials.json' from Google Cloud Console is in the project root.
+    """
+    typer.echo("Attempting to authenticate with Google Drive...")
+    try:
+        service = authenticate_gdrive()
+        if not service:
+            typer.secho("Failed to authenticate with Google Drive. Please ensure 'credentials.json' is set up correctly and you've completed the authentication flow.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        typer.secho("Successfully authenticated with Google Drive.", fg=typer.colors.GREEN)
+        typer.echo(f"Files will be uploaded to a root folder named: '{APP_ROOT_FOLDER_NAME}'")
+
+        if story_slug_or_all.upper() == "ALL":
+            typer.echo("Attempting to upload all stories...")
+            epubs_base_dir = "epubs"
+            metadata_base_dir = "metadata_store"
+            story_slugs = set()
+
+            if os.path.exists(epubs_base_dir) and os.path.isdir(epubs_base_dir):
+                for slug in os.listdir(epubs_base_dir):
+                    if os.path.isdir(os.path.join(epubs_base_dir, slug)):
+                        story_slugs.add(slug)
+            
+            if os.path.exists(metadata_base_dir) and os.path.isdir(metadata_base_dir):
+                for slug in os.listdir(metadata_base_dir):
+                    if os.path.isdir(os.path.join(metadata_base_dir, slug)):
+                        story_slugs.add(slug)
+
+            if not story_slugs:
+                typer.secho("No story slugs found in 'epubs' or 'metadata_store' directories.", fg=typer.colors.YELLOW)
+                return
+
+            typer.echo(f"Found {len(story_slugs)} potential story slug(s): {', '.join(sorted(list(story_slugs)))}")
+            for slug in sorted(list(story_slugs)):
+                typer.echo(f"--- Uploading story: {slug} ---")
+                upload_story_files(service, slug)
+                typer.echo(f"--- Finished uploading story: {slug} ---\n")
+            typer.secho("All stories processed.", fg=typer.colors.GREEN)
+
+        else:
+            story_slug = story_slug_or_all
+            typer.echo(f"Attempting to upload story: {story_slug}")
+            upload_story_files(service, story_slug)
+            typer.secho(f"Finished uploading story: {story_slug}", fg=typer.colors.GREEN)
+
+    except FileNotFoundError as e: # Specifically for credentials.json missing
+        typer.secho(f"Configuration error: {e}", fg=typer.colors.RED)
+        typer.secho("Please ensure 'credentials.json' is in the project root and you have authenticated if it's your first time.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.secho(f"An error occurred during the Google Drive upload process: {e}", fg=typer.colors.RED)
+        # import traceback
+        # typer.echo(traceback.format_exc()) # Optional: for more detailed error during dev
+        raise typer.Exit(code=1)
 
 if __name__ == "__main__":
     app()
