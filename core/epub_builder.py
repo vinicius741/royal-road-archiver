@@ -506,12 +506,25 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
 
             # Action: Create or update title tag
             if not title_tag:
-                title_tag = soup.new_tag('title')
-                title_tag.string = desired_title_text
-                head.append(title_tag)
+                log_debug(f"  No existing <title> tag found in <head> for {item.get_name()}. Creating and reconstructing <head>.")
+                new_title_tag = soup.new_tag('title') # Renamed to avoid confusion
+                new_title_tag.string = desired_title_text
+
+                original_head_children = list(head.children)
+                log_debug(f"  Original <head> had {len(original_head_children)} child(ren) before clearing for title insertion.")
+                head.clear() # Clear out existing children from head
+
+                head.append(new_title_tag) # Add the new title first
+
+                # Append original children back after the title
+                for child in original_head_children:
+                    head.append(child)
+
                 item_modified_this_iteration = True
-                log_debug(f"  CREATED new <title> tag with content: '{title_tag.string}' for {item.get_name()}")
+                # Use new_title_tag.string for the log message as title_tag might be None here
+                log_debug(f"  Reconstructed <head> for {item.get_name()}. New <title> is '{new_title_tag.string}'. Total <head> children: {len(head.contents)}.")
             elif title_tag.string != desired_title_text:
+                # This part for updating an existing title remains the same
                 title_tag.string = desired_title_text
                 item_modified_this_iteration = True
                 log_debug(f"  UPDATED existing <title> tag to: '{title_tag.string}' for {item.get_name()}")
