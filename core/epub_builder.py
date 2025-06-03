@@ -54,7 +54,7 @@ def _load_chapter_content(file_path: str, chapter_title: str, chapter_uid: str) 
             title_tag = soup.new_tag('title')
             title_tag.string = chapter_title
             head.append(title_tag)
-        
+
         html_content = str(soup)
 
         # Create EpubHtml item
@@ -237,7 +237,7 @@ def build_epubs_for_story(
                         try:
                             cover_html_content = item.get_content().decode('utf-8')
                             cover_soup = BeautifulSoup(cover_html_content, 'html.parser')
-                            
+
                             head = cover_soup.find('head')
                             if not head:
                                 head = cover_soup.new_tag('head')
@@ -252,7 +252,7 @@ def build_epubs_for_story(
                             if not title_tag:
                                 title_tag = cover_soup.new_tag('title')
                                 head.append(title_tag)
-                            
+
                             title_tag.string = "Cover"
                             item.set_content(str(cover_soup).encode('utf-8'))
                             print(f"   Updated title for '{item.file_name}' to 'Cover'.")
@@ -398,3 +398,98 @@ def modify_epub_content(epub_path: str, sentences_to_remove: List[str]):
             #         print(f"Error restoring backup for {epub_path}: {re}")
     else:
         print(f"No changes made to EPUB: {epub_path}")
+
+
+def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
+    """
+    Scans all XHTML items in an EpubBook and ensures they have a <title> tag
+    in their <head> section.
+
+    For chapter files, it tries to use the item's manifest title if available and sensible,
+    otherwise generates a title from the filename.
+    For 'cover.xhtml', it sets the title to 'Cover'.
+
+    Args:
+        book: The ebooklib.epub.EpubBook object to modify.
+
+    Returns:
+        True if any modifications were made to the book's items, False otherwise.
+    """
+    overall_modified_status = False # Tracks if any item in the book was changed
+
+    for item in book.get_items_of_type(epub.ITEM_DOCUMENT):
+        if not (item.get_name().lower().endswith(('.xhtml', '.html'))):
+            continue
+
+        item_modified_this_iteration = False # Tracks if this specific item was changed
+        try:
+            original_content = item.get_content().decode('utf-8', errors='ignore')
+            soup = BeautifulSoup(original_content, 'html.parser')
+
+            head = soup.find('head')
+            if not head:
+                head = soup.new_tag('head')
+                html_tag = soup.find('html')
+                if html_tag:
+                    html_tag.insert(0, head) # Prepend head to html tag
+                else:
+                    # If no html tag, we might try to add one or wrap content
+                    # For now, let's assume a basic structure or skip problematic files
+                    print(f"   WARNING: No <html> tag found in {item.get_name()}, attempting to add basic structure for title fix.")
+                    # Create html and body tags if they don't exist
+                    if not soup.find('html'):
+                        new_html_tag = soup.new_tag('html')
+                        new_body_tag = soup.new_tag('body')
+                        new_html_tag.append(head) # head is already created
+                        new_html_tag.append(new_body_tag)
+                        # Move existing content into body, if any direct children of soup
+                        for child_content in list(soup.contents):
+                            new_body_tag.append(child_content.extract())
+                        soup.append(new_html_tag)
+                    else: # html tag exists, but no head was found initially. head is already created and added to html.
+                        pass
+
+
+            title_tag = head.find('title')
+
+            desired_title_text = ""
+            # Check if it's cover.xhtml based on typical naming by ebooklib or common use
+            # ebooklib's set_cover often names the XHTML file 'cover.xhtml' and gives it id 'cover'
+            if item.get_name().lower() == 'cover.xhtml' or item.id.lower() == 'cover':
+                desired_title_text = "Cover"
+            else:
+                # Attempt to use the item's title from manifest (e.g., set via book.add_item or chapter loading)
+                # item.title is part of the Dublin Core metadata for the item in OPF
+                if hasattr(item, 'title') and item.title and item.title.strip().lower() not in ['none', 'untitled', '']:
+                    # This 'title' attribute on the item is often what appears in the TOC or manifest
+                    # and should be a good candidate for the HTML <title>.
+                    desired_title_text = item.title.strip()
+                else:
+                    # Fallback: generate a title from filename
+                    filename_sans_ext = os.path.splitext(item.get_name())[0]
+                    # Basic beautification: replace underscores/hyphens, capitalize
+                    processed_filename = filename_sans_ext.replace('_', ' ').replace('-', ' ')
+                    desired_title_text = ' '.join(word.capitalize() for word in processed_filename.split() if word)
+                    if not desired_title_text: # Ultimate fallback
+                        desired_title_text = "Untitled Document"
+
+            if not title_tag:
+                title_tag = soup.new_tag('title')
+                title_tag.string = desired_title_text
+                head.append(title_tag)
+                item_modified_this_iteration = True
+            elif title_tag.string != desired_title_text:
+                title_tag.string = desired_title_text
+                item_modified_this_iteration = True
+
+            if item_modified_this_iteration:
+                item.set_content(str(soup).encode('utf-8'))
+                overall_modified_status = True
+                # print(f"   INFO: Applied title '{desired_title_text}' to {item.get_name()}")
+
+        except Exception as e:
+            print(f"   ERROR: Could not process item {item.get_name()} in fix_xhtml_titles_in_epub: {e}")
+            # import traceback
+            # print(traceback.format_exc())
+
+    return overall_modified_status
