@@ -1,7 +1,7 @@
 # core/epub_builder.py
 import os
 import requests
-import imghdr # Import imghdr
+import filetype # Replaced imghdr with filetype
 from ebooklib import epub
 from ebooklib.epub import read_epub, EpubHtml, EpubNav # Added EpubHtml, EpubNav here
 from bs4 import BeautifulSoup
@@ -179,66 +179,78 @@ def build_epubs_for_story(
                 response.raise_for_status()
                 
                 image_content = response.content
-                actual_image_type = imghdr.what(None, h=image_content)
-                print(f"   Detected cover image type via imghdr: {actual_image_type}")
-
-                image_filename = None # Initialize image_filename
-
-                if actual_image_type:
-                    if actual_image_type == 'jpeg':
-                        image_filename = "cover.jpg"
-                    elif actual_image_type == 'png':
-                        image_filename = "cover.png"
-                    elif actual_image_type == 'gif':
-                        image_filename = "cover.gif"
-                    elif actual_image_type == 'webp':
-                        image_filename = "cover.webp"
-                        print(f"   WARNING: Cover image is WEBP, which might not be universally supported in EPUBs. Using extension .webp.")
-                    # Add other types if necessary, otherwise fallback will be used.
                 
-                # Fallback logic if imghdr doesn't recognize it or image_filename is still None
+                image_filename = None # Initialize image_filename
+                actual_image_ext = None # To store the extension determined by filetype or fallback
+                type_determined_by = "default" # To track how the type was determined
+
+                kind = filetype.guess(image_content)
+                if kind is not None:
+                    print(f"   Detected cover image type via filetype: {kind.extension} (MIME: {kind.mime})")
+                    actual_image_ext = kind.extension
+                    if actual_image_ext == 'jpeg': # filetype.py uses 'jpeg' for .jpg
+                        image_filename = "cover.jpg"
+                        type_determined_by = f"filetype as {actual_image_ext}"
+                    elif actual_image_ext == 'png':
+                        image_filename = "cover.png"
+                        type_determined_by = f"filetype as {actual_image_ext}"
+                    elif actual_image_ext == 'gif':
+                        image_filename = "cover.gif"
+                        type_determined_by = f"filetype as {actual_image_ext}"
+                    elif actual_image_ext == 'webp':
+                        image_filename = "cover.webp"
+                        type_determined_by = f"filetype as {actual_image_ext}"
+                        print(f"   WARNING: Cover image is WEBP (detected by filetype as {actual_image_ext}), which might not be universally supported. Using extension .webp.")
+                    # else: image_filename remains None, fallback will be used.
+                else:
+                    print(f"   filetype.guess() could not determine image type.")
+
+                # Fallback logic if filetype.guess() didn't identify a usable type
                 if image_filename is None:
-                    print(f"   imghdr did not identify the image type or it's an unsupported type. Falling back to Content-Type/URL.")
+                    print(f"   Falling back to Content-Type/URL for cover image type.")
                     content_type = response.headers.get('Content-Type')
                     if content_type:
                         if 'image/jpeg' in content_type:
                             image_filename = "cover.jpg"
+                            type_determined_by = f"Content-Type as {content_type}"
                         elif 'image/png' in content_type:
                             image_filename = "cover.png"
+                            type_determined_by = f"Content-Type as {content_type}"
                         elif 'image/gif' in content_type:
                             image_filename = "cover.gif"
+                            type_determined_by = f"Content-Type as {content_type}"
                         elif 'image/webp' in content_type:
                             image_filename = "cover.webp"
-                            # Warning for WEBP from Content-Type (if not already given by imghdr)
-                            if actual_image_type != 'webp': 
-                                print(f"   WARNING: Cover image is WEBP (Content-Type: {content_type}), which might not be universally supported. Using extension .webp.")
+                            type_determined_by = f"Content-Type as {content_type}"
+                            print(f"   WARNING: Cover image is WEBP (Content-Type: {content_type}), which might not be universally supported. Using extension .webp.")
                         else:
                             print(f"   WARNING: Unknown cover image Content-Type '{content_type}'. Attempting URL extension.")
                     
                     if image_filename is None: # Still not determined, try URL extension
-                        url_ext = os.path.splitext(cover_image_url)[1].lower()
-                        if url_ext in ['.jpg', '.jpeg']:
+                        url_ext_fallback = os.path.splitext(cover_image_url)[1].lower()
+                        if url_ext_fallback in ['.jpg', '.jpeg']:
                             image_filename = "cover.jpg"
-                        elif url_ext == '.png':
+                            type_determined_by = f"URL extension as {url_ext_fallback}"
+                        elif url_ext_fallback == '.png':
                             image_filename = "cover.png"
-                        elif url_ext == '.gif':
+                            type_determined_by = f"URL extension as {url_ext_fallback}"
+                        elif url_ext_fallback == '.gif':
                             image_filename = "cover.gif"
-                        elif url_ext == '.webp':
+                            type_determined_by = f"URL extension as {url_ext_fallback}"
+                        elif url_ext_fallback == '.webp':
                             image_filename = "cover.webp"
-                             # Warning for WEBP from URL (if not already given)
-                            if actual_image_type != 'webp' and (not content_type or 'image/webp' not in content_type):
-                                print(f"   WARNING: Cover image is WEBP (URL extension: {url_ext}), which might not be universally supported. Using extension .webp.")
-                        else:
-                            print(f"   WARNING: Could not determine cover image type from Content-Type or URL. Defaulting to cover.jpg.")
-                            image_filename = "cover.jpg" # Final default
-                
-                # Ensure image_filename is definitely set (should be redundant if logic above is complete)
-                if image_filename is None:
-                    print(f"   CRITICAL WARNING: image_filename was not set despite all checks. Defaulting to cover.jpg.")
-                    image_filename = "cover.jpg"
+                            type_determined_by = f"URL extension as {url_ext_fallback}"
+                            print(f"   WARNING: Cover image is WEBP (URL extension: {url_ext_fallback}), which might not be universally supported. Using extension .webp.")
+                        # No else here, if still None, will hit final default
 
+                    # Final default if all methods fail
+                    if image_filename is None:
+                        print(f"   WARNING: Could not determine cover image type from filetype, Content-Type, or URL. Defaulting to cover.jpg.")
+                        image_filename = "cover.jpg" # Final default
+                        type_determined_by = "default (cover.jpg)"
+                
                 book.set_cover(image_filename, image_content)
-                print(f"   Cover image '{image_filename}' added to EPUB.")
+                print(f"   Cover image '{image_filename}' added to EPUB (type determined by: {type_determined_by}).")
 
             except requests.exceptions.RequestException as e_cover:
                 print(f"   WARNING: Failed to download cover image from {cover_image_url}: {e_cover}")

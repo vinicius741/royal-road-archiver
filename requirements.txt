@@ -1,7 +1,8 @@
-typer
-requests
 beautifulsoup4
 ebooklib
+filetype==1.2.0
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+requests
+typer
