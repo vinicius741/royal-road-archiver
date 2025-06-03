@@ -1,11 +1,13 @@
 # core/epub_builder.py
 import os
 import requests
-from ebooklib import epub
+import ebooklib # Added for ebooklib.ITEM_DOCUMENT
+from ebooklib import epub # For epub.EpubBook etc.
 from ebooklib.epub import read_epub, EpubHtml, EpubNav # Added EpubHtml, EpubNav here
 from bs4 import BeautifulSoup
 from typing import Optional, List # List is already here
 from core.processor import remove_sentences_from_html_content # Added this import
+from core.logging_utils import log_debug, log_warning # Added for enhanced fix_xhtml_titles_in_epub
 import re
 import uuid  # For unique identifiers
 import datetime  # For publication date metadata
@@ -32,6 +34,30 @@ def _load_chapter_content(file_path: str, chapter_title: str, chapter_uid: str) 
         if not html_content.strip():
             print(f"   WARNING: Chapter file {file_path} is empty and will be skipped.")
             return None
+
+        # Ensure the chapter has a <title> tag
+        soup = BeautifulSoup(html_content, 'html.parser')
+        head = soup.find('head')
+        if not head:
+            head = soup.new_tag('head')
+            if soup.html:
+                soup.html.insert(0, head)
+            else:
+                # If no <html> tag, we are dealing with a fragment.
+                # This case should ideally not happen for full XHTML documents.
+                # However, to be robust, we can wrap the content in html if needed,
+                # or decide that title injection isn't possible/meaningful here.
+                # For now, let's assume an <html> tag is present or bs4 handles it.
+                # If not, head might not be properly attached.
+                # A more robust solution for fragments might be needed if they are common.
+                pass # Or handle fragment case explicitly
+
+        if head and not head.find('title'):
+            title_tag = soup.new_tag('title')
+            title_tag.string = chapter_title
+            head.append(title_tag)
+
+        html_content = str(soup)
 
         # Create EpubHtml item
         chapter_item = epub.EpubHtml(
@@ -207,6 +233,35 @@ def build_epubs_for_story(
                 book.set_cover(image_filename, image_content) 
                 print(f"   Cover image '{image_filename}' added to EPUB.")
 
+                # Ensure cover.xhtml has the title "Cover"
+                for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT): # Changed to ebooklib.ITEM_DOCUMENT
+                    if item.get_name() == 'cover.xhtml' or item.file_name == 'cover.xhtml': # Check both name and file_name for robustness
+                        try:
+                            cover_html_content = item.get_content().decode('utf-8')
+                            cover_soup = BeautifulSoup(cover_html_content, 'html.parser')
+
+                            head = cover_soup.find('head')
+                            if not head:
+                                head = cover_soup.new_tag('head')
+                                # Try to insert it into <html>, or at the beginning if no <html>
+                                html_tag = cover_soup.find('html')
+                                if html_tag:
+                                    html_tag.insert(0, head)
+                                else:
+                                    cover_soup.insert(0, head)
+
+                            title_tag = head.find('title')
+                            if not title_tag:
+                                title_tag = cover_soup.new_tag('title')
+                                head.append(title_tag)
+
+                            title_tag.string = "Cover"
+                            item.set_content(str(cover_soup).encode('utf-8'))
+                            print(f"   Updated title for '{item.file_name}' to 'Cover'.")
+                        except Exception as e_cover_title:
+                            print(f"   WARNING: Could not update title for cover.xhtml: {e_cover_title}")
+                        break # Found and processed cover.xhtml, no need to continue loop
+
             except requests.exceptions.RequestException as e_cover:
                 print(f"   WARNING: Failed to download cover image from {cover_image_url}: {e_cover}")
             except Exception as e_cover_generic:
@@ -345,3 +400,146 @@ def modify_epub_content(epub_path: str, sentences_to_remove: List[str]):
             #         print(f"Error restoring backup for {epub_path}: {re}")
     else:
         print(f"No changes made to EPUB: {epub_path}")
+
+
+def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
+    """
+    Scans all XHTML items in an EpubBook and ensures they have a <title> tag
+    in their <head> section.
+
+    For chapter files, it tries to use the item's manifest title if available and sensible,
+    otherwise generates a title from the filename.
+    For 'cover.xhtml', it sets the title to 'Cover'.
+
+    Args:
+        book: The ebooklib.epub.EpubBook object to modify.
+
+    Returns:
+        True if any modifications were made to the book's items, False otherwise.
+    """
+    overall_modified_status = False
+    log_debug(f"Starting fix_xhtml_titles_in_epub for book with main title (from OPF): {book.title}")
+
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+        if not (item.get_name().lower().endswith(('.xhtml', '.html'))):
+            log_debug(f"Skipping non-XHTML/HTML item: {item.get_name()} (Type: {item.get_type()})")
+            continue
+
+        log_debug(f"Processing item: {item.get_name()} (ID: {item.id}, Type: {item.get_type()}) for title fixing.")
+        item_modified_this_iteration = False
+        try:
+            original_content = item.get_content().decode('utf-8', errors='ignore')
+            soup = BeautifulSoup(original_content, 'xml') # Changed parser to 'xml'
+            log_debug(f"  Parsing item '{item.get_name()}' using 'xml' parser (lxml required).")
+
+            # Ensure <html> tag has the correct XHTML namespace
+            html_tag = soup.find('html')
+            xhtml_namespace = "http://www.w3.org/1999/xhtml"
+            if html_tag:
+                original_xmlns = html_tag.get('xmlns')
+                if original_xmlns != xhtml_namespace:
+                    html_tag['xmlns'] = xhtml_namespace
+                    log_debug(f"  Ensured <html> tag has xmlns='{xhtml_namespace}' for {item.get_name()}. Was: '{original_xmlns}'")
+                    item_modified_this_iteration = True # Technically the soup is modified
+            else:
+                # This case is handled later when creating new_html_tag, but we log if no html tag is found initially.
+                log_debug(f"  No <html> tag initially found in {item.get_name()}. Will be handled if head/body are created from fragment.")
+
+            # Determine desired title text first (needed for decision logic)
+            desired_title_text = ""
+            if hasattr(item, 'title') and item.title: # Check item.title from manifest (OPF)
+                log_debug(f"  Item manifest (OPF) title: '{item.title.strip()}'")
+            else:
+                log_debug(f"  Item has no manifest (OPF) title or it's empty.")
+
+            if item.get_name().lower() == 'cover.xhtml' or item.id.lower() == 'cover':
+                desired_title_text = "Cover"
+                log_debug(f"  Identified as cover page. Desired HTML <title>: '{desired_title_text}'")
+            else:
+                if hasattr(item, 'title') and item.title and item.title.strip().lower() not in ['none', 'untitled', '']:
+                    desired_title_text = item.title.strip()
+                    log_debug(f"  Using item manifest (OPF) title for HTML <title>. Desired: '{desired_title_text}'")
+                else:
+                    log_debug(f"  Manifest (OPF) title is absent or generic. Deriving from filename: {item.get_name()}")
+                    filename_sans_ext = os.path.splitext(item.get_name())[0]
+                    processed_filename = filename_sans_ext.replace('_', ' ').replace('-', ' ')
+                    desired_title_text = ' '.join(word.capitalize() for word in processed_filename.split() if word)
+                    if not desired_title_text: # If filename was like ".ext" or just symbols
+                        log_debug(f"  Filename-derived title for '{item.get_name()}' was empty.")
+                        desired_title_text = "Untitled Content"
+                    log_debug(f"  Derived HTML <title> from filename: '{desired_title_text}'")
+
+            if not desired_title_text.strip():
+                desired_title_text = "Untitled Document"
+                log_warning(f"  Desired title was empty or whitespace for {item.get_name()}. Corrected to fallback: '{desired_title_text}'")
+
+            # Now, handle head and title based on the desired_title_text
+            old_head = soup.find('head')
+            item_needs_head_replacement_or_creation = False
+
+            if old_head:
+                existing_title_tag_in_old_head = old_head.find('title')
+                if not existing_title_tag_in_old_head:
+                    log_debug(f"  No <title> found in existing <head> of {item.get_name()}. Head will be replaced.")
+                    item_needs_head_replacement_or_creation = True
+                elif existing_title_tag_in_old_head.string != desired_title_text:
+                    log_debug(f"  Existing <title> ('{existing_title_tag_in_old_head.string}') needs update to '{desired_title_text}' in {item.get_name()}. Head will be replaced.")
+                    item_needs_head_replacement_or_creation = True
+                else:
+                    log_debug(f"  Existing <title> ('{existing_title_tag_in_old_head.string}') is correct in {item.get_name()}. No head modification needed.")
+            else:
+                log_debug(f"  No <head> tag found in {item.get_name()}. A new head will be created.")
+                item_needs_head_replacement_or_creation = True
+
+            if item_needs_head_replacement_or_creation:
+                new_head = soup.new_tag('head')
+
+                new_title = soup.new_tag('title')
+                new_title.string = desired_title_text
+                new_head.append(new_title)
+                log_debug(f"  Created new <title> with content: '{desired_title_text}' and added to new <head> for {item.get_name()}.")
+
+                if old_head:
+                    log_debug(f"  Attempting to preserve other essential tags from old <head> for {item.get_name()}...")
+                    preserved_count = 0
+                    for child in old_head.children:
+                        if child.name and child.name.lower() != 'title':
+                            # Basic clone: new_tag with same name and attrs, then copy string content if any.
+                            # For more complex children, a deepcopy approach might be needed, but this handles common cases.
+                            cloned_child = soup.new_tag(child.name, **child.attrs)
+                            if child.string: # Copy string content if it exists
+                                cloned_child.string = child.string
+                            # If child has its own children (e.g. a script tag with inline content not just .string)
+                            # this simple clone might not be enough. But for typical <meta>, <link>, it's okay.
+                            # For now, we assume simple meta/link tags.
+                            new_head.append(cloned_child)
+                            preserved_count += 1
+                    log_debug(f"  Preserved {preserved_count} other tags from the old <head> into new <head>.")
+
+                html_tag_for_head_insertion = soup.find('html') # Should exist due to earlier checks/creation
+                if not html_tag_for_head_insertion:
+                    log_warning(f"  CRITICAL: No <html> tag found to insert/replace <head> in {item.get_name()} despite earlier checks. Skipping head modification for this item.")
+                else:
+                    if old_head:
+                        log_debug(f"  Replacing old <head> with new <head> for {item.get_name()}.")
+                        old_head.replace_with(new_head)
+                    else: # No old_head, so it's a new insertion
+                        log_debug(f"  Inserting new <head> into <html> for {item.get_name()}.")
+                        html_tag_for_head_insertion.insert(0, new_head)
+                    item_modified_this_iteration = True
+
+            # This existing block handles the case where item_modified_this_iteration was set (either by namespace fix or head/title fix)
+            if item_modified_this_iteration:
+                item.set_content(str(soup).encode('utf-8'))
+                overall_modified_status = True
+                log_debug(f"  Item '{item.get_name()}' content was MODIFIED and updated in the book object.")
+            else:
+                log_debug(f"  No modifications to HTML content for item '{item.get_name()}'.")
+
+        except Exception as e:
+            log_warning(f"  ERROR processing item {item.get_name()} in fix_xhtml_titles_in_epub: {e}")
+            # import traceback # Consider adding for very detailed debugging if needed by user
+            # log_debug(traceback.format_exc())
+
+    log_debug(f"Finished fix_xhtml_titles_in_epub for book. Overall modified status: {overall_modified_status}")
+    return overall_modified_status

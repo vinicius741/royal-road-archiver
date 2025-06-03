@@ -14,6 +14,8 @@ from core.cli_helpers import (
     finalize_epub_metadata,
 )
 from core.epub_builder import modify_epub_content # Added for remove-sentences
+from core.epub_builder import fix_xhtml_titles_in_epub # Added for fix-epub-titles
+from ebooklib import epub # Added for fix-epub-titles
 from core.gdrive_uploader import authenticate_gdrive, upload_story_files, APP_ROOT_FOLDER_NAME
 import json # Added for remove-sentences
 
@@ -755,6 +757,56 @@ def remove_sentences_command(
         log_success(f"Sentence removal process completed. Processed {processed_count} EPUB file(s).")
     else:
         log_info("Sentence removal process finished, but no EPUB files were processed (or none required modification based on current logic).")
+
+
+@app.command(name="fix-epub-titles")
+def fix_epub_titles_command(
+    input_folder: str = typer.Argument(..., help="Path to the folder containing EPUB files to fix. It will search recursively in subdirectories.")
+):
+    """
+    Scans a folder (and its subdirectories) for EPUB files and fixes missing <title>
+    tags in their internal XHTML components (chapters and cover).
+    This command overwrites the original EPUB files.
+    """
+    log_info(f"Starting EPUB title fixing process for folder: {input_folder}")
+    abs_input_folder = os.path.abspath(input_folder)
+
+    if not os.path.isdir(abs_input_folder):
+        log_error(f"Error: Input folder '{abs_input_folder}' not found or is not a directory.")
+        raise typer.Exit(code=1)
+
+    fixed_count = 0
+    processed_count = 0
+    found_epub_files = False
+
+    for root_dir, _, file_list in os.walk(abs_input_folder):
+        for filename in file_list:
+            if filename.lower().endswith(".epub"):
+                found_epub_files = True
+                epub_file_path = os.path.join(root_dir, filename)
+                log_info(f"--- Processing EPUB: {epub_file_path} ---")
+                processed_count += 1
+                try:
+                    # It's important to use a new book object for each file
+                    book = epub.read_epub(epub_file_path)
+                    if fix_xhtml_titles_in_epub(book): # Call the function from core.epub_builder
+                        # Define epub.write_epub options; {} means use defaults
+                        # epub3_pages=False and toc_depth=2 were used in build_epubs_for_story
+                        # Using {} should be fine for just saving modifications.
+                        epub.write_epub(epub_file_path, book, {})
+                        log_success(f"Successfully fixed titles and saved: {epub_file_path}")
+                        fixed_count += 1
+                    else:
+                        log_info(f"No title changes were necessary for: {epub_file_path}")
+                except Exception as e:
+                    log_error(f"Failed to process or fix titles in {epub_file_path}: {e}")
+                    # For more detailed debugging, uncomment the next line
+                    # log_debug(traceback.format_exc())
+
+    if not found_epub_files:
+        log_warning(f"No .epub files found in '{abs_input_folder}' or its subdirectories.")
+    else:
+        log_success(f"EPUB title fixing process completed. Processed {processed_count} EPUB file(s). Fixed titles in {fixed_count} file(s).")
 
 
 if __name__ == "__main__":
