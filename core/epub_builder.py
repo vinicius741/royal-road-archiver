@@ -428,8 +428,10 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
         log_debug(f"Processing item: {item.get_name()} (ID: {item.id}, Type: {item.get_type()}) for title fixing.")
         item_modified_this_iteration = False
         try:
-            original_content = item.get_content().decode('utf-8', errors='ignore')
-            soup = BeautifulSoup(original_content, 'xml') # Changed parser to 'xml'
+            original_content_str = item.get_content().decode('utf-8', errors='ignore')
+            # The re.sub for <head/> has been removed.
+            # BeautifulSoup will parse the content as is from item.get_content().
+            soup = BeautifulSoup(original_content_str, 'xml')
             log_debug(f"  Parsing item '{item.get_name()}' using 'xml' parser (lxml required).")
 
             # Ensure <html> tag has the correct XHTML namespace
