@@ -418,7 +418,7 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
         True if any modifications were made to the book's items, False otherwise.
     """
     overall_modified_status = False
-    log_debug(f"Starting fix_xhtml_titles_in_epub for book ID: {book.get_identifier()}")
+    log_debug(f"Starting fix_xhtml_titles_in_epub for book with main title (from OPF): {book.title}")
 
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         if not (item.get_name().lower().endswith(('.xhtml', '.html'))):
