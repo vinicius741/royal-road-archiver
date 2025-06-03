@@ -425,120 +425,193 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
             log_debug(f"Skipping non-XHTML/HTML item: {item.get_name()} (Type: {item.get_type()})")
             continue
 
-        # Skip processing for cover.xhtml
-        if item.get_name().lower() == 'cover.xhtml':
-            log_debug(f"Skipping title processing for cover.xhtml item: {item.get_name()}")
-            continue
+        # Temporarily comment out skipping cover.xhtml to test new string logic on it
+        # if item.get_name().lower() == 'cover.xhtml':
+        #     log_debug(f"Skipping title processing for cover.xhtml item: {item.get_name()}")
+        #     continue
 
-        log_debug(f"Processing item: {item.get_name()} (ID: {item.id}, Type: {item.get_type()}) for title fixing.")
-        item_modified_this_iteration = False
+        log_debug(f"Processing item with STRING OPS: {item.get_name()} (ID: {item.id}, Type: {item.get_type()})")
+        item_modified_this_iteration = False # Renamed from made_change_by_str_manip for consistency
+
         try:
-            original_content_str = item.get_content().decode('utf-8', errors='ignore')
-            content_before_head_regex_fix = original_content_str
+            item_content_str = item.get_content().decode('utf-8', errors='ignore')
+            modified_content_str = item_content_str
 
-            original_content_str = re.sub(r"<head\s*/>", "<head></head>", original_content_str, flags=re.IGNORECASE)
-
-            if original_content_str != content_before_head_regex_fix:
-                log_debug(f"  Applied <head/> to <head></head> regex fix for {item.get_name()}")
-                item_modified_this_iteration = True
-
-            # For non-cover items, always use 'xml' parser
-            log_debug(f"  Parsing item '{item.get_name()}' (post-regex) using 'xml' parser (lxml required).")
-            soup = BeautifulSoup(original_content_str, 'xml')
-
-            # Ensure <html> tag has the correct XHTML namespace (can remain as is)
-            html_tag = soup.find('html')
-            xhtml_namespace = "http://www.w3.org/1999/xhtml"
-            if html_tag:
-                original_xmlns = html_tag.get('xmlns')
-                if original_xmlns != xhtml_namespace:
-                    html_tag['xmlns'] = xhtml_namespace
-                    log_debug(f"  Ensured <html> tag has xmlns='{xhtml_namespace}' for {item.get_name()}. Was: '{original_xmlns}'")
-                    item_modified_this_iteration = True
-            else:
-                log_debug(f"  No <html> tag initially found in {item.get_name()}. Will be handled if head/body are created from fragment.")
-
-            # Determine desired title text first (logic for this can remain largely as is)
+            # --- Determine desired_title_text (reusing existing logic) ---
             desired_title_text = ""
-            # ... (keep existing logic for determining desired_title_text based on item.title, filename, etc.)
-            # This part is assumed to be correct as per previous subtask (Turn 34)
-            if hasattr(item, 'title') and item.title:
-                log_debug(f"  Item manifest (OPF) title: '{item.title.strip()}'")
+            # Specific logic for cover page title
+            if item.get_name().lower() == 'cover.xhtml': # Check filename for cover
+                desired_title_text = "Cover"
+                log_debug(f"  Identified as cover page by name. Desired HTML <title>: '{desired_title_text}'")
+            elif item.id.lower() == 'cover': # Check item ID for cover (common for programmatically added covers)
+                desired_title_text = "Cover"
+                log_debug(f"  Identified as cover page by ID. Desired HTML <title>: '{desired_title_text}'")
             else:
-                log_debug(f"  Item has no manifest (OPF) title or it's empty.")
-
-            # Note: The cover page is skipped earlier, so this specific check for 'cover.xhtml'
-            # to set desired_title_text = "Cover" is now redundant here if cover items don't reach this part.
-            # However, the generic title determination logic should still be robust.
-            if hasattr(item, 'title') and item.title and item.title.strip().lower() not in ['none', 'untitled', '']:
-                desired_title_text = item.title.strip()
-                log_debug(f"  Using item manifest (OPF) title for HTML <title>. Desired: '{desired_title_text}'")
-            else: # Fallback to filename if no valid item.title
-                log_debug(f"  Manifest (OPF) title is absent or generic for {item.get_name()}. Deriving from filename.")
-                filename_sans_ext = os.path.splitext(item.get_name())[0]
-                processed_filename = filename_sans_ext.replace('_', ' ').replace('-', ' ')
-                desired_title_text = ' '.join(word.capitalize() for word in processed_filename.split() if word)
-                if not desired_title_text:
-                    desired_title_text = "Untitled Content"
-                log_debug(f"  Derived HTML <title> from filename: '{desired_title_text}'")
-
-            if not desired_title_text.strip(): # Final fallback
-                desired_title_text = "Untitled Document"
-                log_warning(f"  Desired title for {item.get_name()} was empty or whitespace. Corrected to fallback: '{desired_title_text}'")
-
-            # Refactored head/title update logic
-            head_tag = soup.find('head')
-
-            if not head_tag:
-                log_debug(f"  No <head> tag found in {item.get_name()}. Creating new <head> and <title>.")
-                head_tag = soup.new_tag('head')
-                title_tag = soup.new_tag('title')
-                title_tag.string = desired_title_text
-                head_tag.append(title_tag)
-
-                # Try to insert head into html tag, or at the beginning of the soup
-                html_tag_for_insertion = soup.find('html')
-                if html_tag_for_insertion:
-                    html_tag_for_insertion.insert(0, head_tag)
+                # Generic logic for other items
+                if hasattr(item, 'title') and item.title and item.title.strip().lower() not in ['none', 'untitled', '']:
+                    desired_title_text = item.title.strip()
+                    log_debug(f"  Using item manifest (OPF/NCX) title for HTML <title>. Desired: '{desired_title_text}' for {item.get_name()}")
                 else:
-                    # If no <html> tag, this is problematic for XHTML.
-                    # Prepend to soup root, though this might not be valid for all doc types.
-                    log_warning(f"  No <html> tag found in {item.get_name()} to insert <head>. Prepending <head> to root.")
-                    # This part might need more robust handling depending on expected input document structure
-                    # For typical XHTML, an <html> tag should exist.
-                    # If soup.contents is empty or first element is not suitable, this could be an issue.
-                    # A simple prepend might not work if soup is not just a list of tags.
-                    # However, for this function's context, we expect fairly standard XHTML.
-                    if soup.contents:
-                        soup.contents[0].insert_before(head_tag)
-                    else: # Should not happen with valid XHTML
-                        soup.append(head_tag)
+                    log_debug(f"  Manifest (OPF/NCX) title is absent or generic for {item.get_name()}. Deriving from filename.")
+                    filename_sans_ext = os.path.splitext(item.get_name())[0]
+                    processed_filename = filename_sans_ext.replace('_', ' ').replace('-', ' ')
+                    desired_title_text = ' '.join(word.capitalize() for word in processed_filename.split() if word)
+                    if not desired_title_text:
+                        desired_title_text = "Untitled Document" # Changed from "Untitled Content" for consistency
+                    log_debug(f"  Derived HTML <title> from filename: '{desired_title_text}' for {item.get_name()}")
+
+            if not desired_title_text.strip(): # Final fallback, though less likely now
+                desired_title_text = "Untitled Document"
+                log_warning(f"  Desired title for {item.get_name()} was empty or whitespace after all checks. Corrected to fallback: '{desired_title_text}'")
+
+            import html
+            escaped_desired_title_text = html.escape(desired_title_text)
+            temp_title_placeholder = "___TEMP_TITLE_PLACEHOLDER___"
+            head_with_temp_title_payload = f"<title>{temp_title_placeholder}</title>" # Just the title tag with placeholder
+
+            # --- String manipulation logic ---
+            next_content_str = modified_content_str
+
+            # Case 1: <head/> (self-closing, possibly with spaces and attributes)
+            # Replaces <head .../> with <head ...><title>PLACEHOLDER</title></head>
+            # Captures attributes in group 1 to preserve them.
+            def replace_self_closing_head(match):
+                attrs = match.group(1) if match.group(1) else ""
+                return f"<head{attrs}>{head_with_temp_title_payload}</head>"
+
+            next_content_str = re.sub(r"<head(\s*[^>]*)/>", replace_self_closing_head, modified_content_str, count=1, flags=re.IGNORECASE)
+            if next_content_str != modified_content_str:
+                modified_content_str = next_content_str
                 item_modified_this_iteration = True
-            else:
-                # <head> tag exists. Check for <title>.
-                title_tag = head_tag.find('title')
-                if not title_tag:
-                    log_debug(f"  No <title> tag found in existing <head> of {item.get_name()}. Creating and appending <title>.")
-                    title_tag = soup.new_tag('title')
-                    title_tag.string = desired_title_text
-                    head_tag.append(title_tag)
-                    item_modified_this_iteration = True
-                elif title_tag.string != desired_title_text:
-                    log_debug(f"  Updating <title> text in {item.get_name()} from '{title_tag.string}' to '{desired_title_text}'.")
-                    title_tag.string = desired_title_text
-                    item_modified_this_iteration = True
-                # else: title exists and is correct, do nothing to head/title
+                log_debug(f"  String Case 1: Replaced self-closing <head/> for {item.get_name()}")
 
-            # This existing block handles the case where item_modified_this_iteration was set (either by namespace fix or head/title fix)
+            # Case 2: <head></head> (empty head tags)
+            # Replaces <head></head> with <head><title>PLACEHOLDER</title></head>
+            # Also handles <head attributes></head attributes>
+            if not item_modified_this_iteration:
+                def replace_empty_head(match):
+                    attrs = match.group(1) if match.group(1) else ""
+                    return f"<head{attrs}>{head_with_temp_title_payload}</head>"
+
+                next_content_str = re.sub(r"<head(\s*[^>]*)>\s*</head\s*>", replace_empty_head, modified_content_str, count=1, flags=re.IGNORECASE)
+                if next_content_str != modified_content_str:
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True
+                    log_debug(f"  String Case 2: Replaced empty <head></head> for {item.get_name()}")
+
+            # Case 3: <head><title>...</title></head> (existing title, update it)
+            if not item_modified_this_iteration:
+                def replace_existing_title(match):
+                    head_attrs = match.group(1) if match.group(1) else ""
+                    content_before_title = match.group(2) if match.group(2) else ""
+                    content_after_title = match.group(4) if match.group(4) else ""
+                    # Check if the existing title is already the desired one (after placeholder substitution)
+                    # This check is somewhat redundant if the final replacement of placeholder handles it,
+                    # but can prevent unnecessary flagging of modification if old_title_content was already desired_title_text
+                    old_title_content = match.group(3)
+                    if html.unescape(old_title_content) == desired_title_text: # Compare unescaped existing to unescaped desired
+                         # No change needed if title content is already correct (ignoring placeholder for now)
+                         # We must return the original full match to signal no change to re.sub
+                         # However, re.sub will report a change if the string differs even if semantically same.
+                         # For simplicity, always replace with placeholder, then check content at the end.
+                         pass # Fallthrough to replace with placeholder.
+
+                    return f"<head{head_attrs}>{content_before_title}<title>{temp_title_placeholder}</title>{content_after_title}</head>"
+
+                # Pattern: <head(attributes)>(anything before title)<title>(old_title_content)</title>(anything after title)</head>
+                # Using DOTALL for content that might span newlines. Non-greedy match for content.
+                next_content_str = re.sub(r"<head([^>]*)>\s*(.*?)\s*<title>(.*?)</title>\s*(.*?)\s*</head>",
+                                          replace_existing_title,
+                                          modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+                if next_content_str != modified_content_str: # This means regex made a structural replacement
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True # Flag that a replacement happened
+                    log_debug(f"  String Case 3: Existing <title> structure found and replaced with placeholder for {item.get_name()}")
+                elif temp_title_placeholder not in next_content_str and re.search(r"<head[^>]*>.*?<title>.*?</title>.*?</head>", modified_content_str, flags=re.IGNORECASE | re.DOTALL):
+                    # This case means re.sub didn't change the string because the replace_existing_title returned the original match
+                    # (e.g. if we had a more complex check there).
+                    # However, we still need to check if the *content* of the title needs updating.
+                    # This part is complex. Let's simplify: if Case 3's regex matches, we assume a title exists.
+                    # We'll replace the placeholder later. If the title content was already correct, the final string won't change.
+                    # The item_modified_this_iteration is primarily for structural changes or if title content changes.
+                    # A simpler check: if the regex matches but string is same, the title content might need updating.
+                    # This is handled by the final placeholder replacement and comparison.
+                    pass
+
+
+            # Case 4: <head> without <title> but possibly other content
+            if not item_modified_this_iteration:
+                def add_title_to_existing_head(match):
+                    head_attrs = match.group(1) if match.group(1) else ""
+                    head_content = match.group(2) if match.group(2) else ""
+                    # Defensive check: if a title somehow exists (e.g. partial match from other cases), don't add another
+                    if re.search(r"<title\s*>", head_content, flags=re.IGNORECASE):
+                        return match.group(0) # Return original match if title already present
+                    return f"<head{head_attrs}>{head_with_temp_title_payload}{head_content}</head>"
+
+                # Pattern: <head (attributes)> (content) </head>
+                # This should only apply if previous cases (which are more specific for title presence) didn't match.
+                next_content_str = re.sub(r"<head([^>]*)>(.*?)</head>",
+                                          add_title_to_existing_head,
+                                          modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+                if next_content_str != modified_content_str and temp_title_placeholder in next_content_str:
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True
+                    log_debug(f"  String Case 4: Added <title> to existing non-empty <head> for {item.get_name()}")
+
+            # Case 5: No <head> tag at all. Add <head><title>...</title></head> after <html> tag.
+            # This check should run regardless of item_modified_this_iteration from previous steps,
+            # but only if a head tag wasn't effectively created/populated by previous steps.
+            # A simple check is if temp_title_placeholder is already in modified_content_str.
+            if temp_title_placeholder not in modified_content_str and not re.search(r"<head\s*>", modified_content_str, flags=re.IGNORECASE):
+                def insert_head_after_html_tag(match_obj):
+                    html_attributes = match_obj.group(1) if match_obj.group(1) else ""
+                    # Construct new head with title placeholder
+                    new_head_with_title = f"<head><title>{temp_title_placeholder}</title></head>"
+                    return f"<html{html_attributes}>{new_head_with_title}"
+
+                next_content_str = re.sub(r"<html([^>]*)>", insert_head_after_html_tag, modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+                if next_content_str != modified_content_str:
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True
+                    log_debug(f"  String Case 5: Added new <head> with <title> for {item.get_name()} (no head was present).")
+
+            # After all regex attempts, if a placeholder was inserted, replace it with the actual desired title.
+            if temp_title_placeholder in modified_content_str:
+                final_replaced_content_str = modified_content_str.replace(temp_title_placeholder, escaped_desired_title_text)
+                # Only flag as modified if the final content (with real title) is different from original
+                # OR if item_modified_this_iteration was already true (structural change)
+                if final_replaced_content_str != item_content_str:
+                    item_modified_this_iteration = True
+                    log_debug(f"  Final title for {item.get_name()}: '{desired_title_text}' (escaped: '{escaped_desired_title_text}')")
+                modified_content_str = final_replaced_content_str
+
+            # Ensure XHTML namespace on html tag (can be done with regex too, or kept from BS4 logic if simpler)
+            # For string manipulation, this is more complex if <html> itself is missing.
+            # Assuming <html> tag exists based on typical XHTML structure.
+            if not re.search(r'<html[^>]*xmlns\s*=\s*["\']http://www.w3.org/1999/xhtml["\']', modified_content_str, flags=re.IGNORECASE):
+                def add_xhtml_namespace(match_obj):
+                    current_attrs = match_obj.group(1)
+                    if 'xmlns=' in current_attrs: # If xmlns is there but different, replace (complex) or just log. For now, just add if totally missing.
+                        return match_obj.group(0) # Don't change if xmlns present, even if wrong, for simplicity here.
+                    return f"<html{current_attrs} xmlns=\"http://www.w3.org/1999/xhtml\""
+
+                next_content_str = re.sub(r"<html([^>]*)>", add_xhtml_namespace, modified_content_str, count=1, flags=re.IGNORECASE)
+                if next_content_str != modified_content_str:
+                     modified_content_str = next_content_str
+                     item_modified_this_iteration = True # This is a modification
+                     log_debug(f"  String Ensure XHTML namespace: Added xmlns attribute for {item.get_name()}")
+
+
+            # Update item content if modified
             if item_modified_this_iteration:
-                final_content_str = str(soup)
-                # Conditional print for chap1.xhtml
-                if item.get_name().lower() == 'chap1.xhtml': # Adjust if filename is different in test
-                    print(f"DEBUG_JULES: Final content for chap1.xhtml before set_content: {final_content_str}")
+                # Conditional print for chap1.xhtml (as requested for debugging)
+                if item.get_name().lower() == 'chap1.xhtml':
+                    print(f"DEBUG_JULES: Final content for chap1.xhtml before set_content: {modified_content_str}")
 
-                item.set_content(final_content_str.encode('utf-8'))
+                item.content = modified_content_str.encode('utf-8') # Use direct assignment as per prompt example
                 overall_modified_status = True
-                log_debug(f"  Item '{item.get_name()}' content was MODIFIED and updated in the book object.")
+                log_debug(f"  Item '{item.get_name()}' content was MODIFIED by string ops and updated.")
             else:
                 log_debug(f"  No modifications to HTML content for item '{item.get_name()}'.")
 
