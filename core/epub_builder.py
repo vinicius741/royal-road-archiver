@@ -33,6 +33,30 @@ def _load_chapter_content(file_path: str, chapter_title: str, chapter_uid: str) 
             print(f"   WARNING: Chapter file {file_path} is empty and will be skipped.")
             return None
 
+        # Ensure the chapter has a <title> tag
+        soup = BeautifulSoup(html_content, 'html.parser')
+        head = soup.find('head')
+        if not head:
+            head = soup.new_tag('head')
+            if soup.html:
+                soup.html.insert(0, head)
+            else:
+                # If no <html> tag, we are dealing with a fragment.
+                # This case should ideally not happen for full XHTML documents.
+                # However, to be robust, we can wrap the content in html if needed,
+                # or decide that title injection isn't possible/meaningful here.
+                # For now, let's assume an <html> tag is present or bs4 handles it.
+                # If not, head might not be properly attached.
+                # A more robust solution for fragments might be needed if they are common.
+                pass # Or handle fragment case explicitly
+
+        if head and not head.find('title'):
+            title_tag = soup.new_tag('title')
+            title_tag.string = chapter_title
+            head.append(title_tag)
+        
+        html_content = str(soup)
+
         # Create EpubHtml item
         chapter_item = epub.EpubHtml(
             title=chapter_title,
@@ -206,6 +230,35 @@ def build_epubs_for_story(
 
                 book.set_cover(image_filename, image_content) 
                 print(f"   Cover image '{image_filename}' added to EPUB.")
+
+                # Ensure cover.xhtml has the title "Cover"
+                for item in book.get_items_of_type(epub.ITEM_DOCUMENT):
+                    if item.get_name() == 'cover.xhtml' or item.file_name == 'cover.xhtml': # Check both name and file_name for robustness
+                        try:
+                            cover_html_content = item.get_content().decode('utf-8')
+                            cover_soup = BeautifulSoup(cover_html_content, 'html.parser')
+                            
+                            head = cover_soup.find('head')
+                            if not head:
+                                head = cover_soup.new_tag('head')
+                                # Try to insert it into <html>, or at the beginning if no <html>
+                                html_tag = cover_soup.find('html')
+                                if html_tag:
+                                    html_tag.insert(0, head)
+                                else:
+                                    cover_soup.insert(0, head)
+
+                            title_tag = head.find('title')
+                            if not title_tag:
+                                title_tag = cover_soup.new_tag('title')
+                                head.append(title_tag)
+                            
+                            title_tag.string = "Cover"
+                            item.set_content(str(cover_soup).encode('utf-8'))
+                            print(f"   Updated title for '{item.file_name}' to 'Cover'.")
+                        except Exception as e_cover_title:
+                            print(f"   WARNING: Could not update title for cover.xhtml: {e_cover_title}")
+                        break # Found and processed cover.xhtml, no need to continue loop
 
             except requests.exceptions.RequestException as e_cover:
                 print(f"   WARNING: Failed to download cover image from {cover_image_url}: {e_cover}")
