@@ -429,7 +429,8 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
         item_modified_this_iteration = False
         try:
             original_content = item.get_content().decode('utf-8', errors='ignore')
-            soup = BeautifulSoup(original_content, 'html.parser')
+            soup = BeautifulSoup(original_content, 'xml') # Changed parser to 'xml'
+            log_debug(f"  Parsing item '{item.get_name()}' using 'xml' parser (lxml required).")
 
             # Ensure <html> tag has the correct XHTML namespace
             html_tag = soup.find('html')
