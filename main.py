@@ -764,8 +764,8 @@ def fix_epub_titles_command(
     input_folder: str = typer.Argument(..., help="Path to the folder containing EPUB files to fix. It will search recursively in subdirectories.")
 ):
     """
-    Scans a folder (and its subdirectories) for EPUB files and fixes missing <title> 
-    tags in their internal XHTML components (chapters and cover). 
+    Scans a folder (and its subdirectories) for EPUB files and fixes missing <title>
+    tags in their internal XHTML components (chapters and cover).
     This command overwrites the original EPUB files.
     """
     log_info(f"Starting EPUB title fixing process for folder: {input_folder}")
@@ -793,7 +793,7 @@ def fix_epub_titles_command(
                         # Define epub.write_epub options; {} means use defaults
                         # epub3_pages=False and toc_depth=2 were used in build_epubs_for_story
                         # Using {} should be fine for just saving modifications.
-                        epub.write_epub(epub_file_path, book, {}) 
+                        epub.write_epub(epub_file_path, book, {})
                         log_success(f"Successfully fixed titles and saved: {epub_file_path}")
                         fixed_count += 1
                     else:
@@ -802,7 +802,7 @@ def fix_epub_titles_command(
                     log_error(f"Failed to process or fix titles in {epub_file_path}: {e}")
                     # For more detailed debugging, uncomment the next line
                     # log_debug(traceback.format_exc())
-    
+
     if not found_epub_files:
         log_warning(f"No .epub files found in '{abs_input_folder}' or its subdirectories.")
     else:
