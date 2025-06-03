@@ -1,6 +1,7 @@
 # core/epub_builder.py
 import os
 import requests
+import imghdr # Import imghdr
 from ebooklib import epub
 from ebooklib.epub import read_epub, EpubHtml, EpubNav # Added EpubHtml, EpubNav here
 from bs4 import BeautifulSoup
@@ -178,33 +179,65 @@ def build_epubs_for_story(
                 response.raise_for_status()
                 
                 image_content = response.content
-                content_type = response.headers.get('Content-Type')
-                
-                image_filename = "cover.jpg" # Default filename
-                if content_type:
-                    if 'image/jpeg' in content_type:
-                        image_filename = "cover.jpg"
-                    elif 'image/png' in content_type:
-                        image_filename = "cover.png"
-                    elif 'image/gif' in content_type:
-                        image_filename = "cover.gif"
-                    elif 'image/webp' in content_type: 
-                        print(f"   WARNING: Cover image is WEBP ({content_type}), which might not be universally supported in EPUBs. Attempting as JPEG.")
-                        image_filename = "cover.webp" 
-                    else:
-                        print(f"   WARNING: Unknown cover image Content-Type '{content_type}'. Defaulting to cover.jpg.")
-                else: # Try to infer from URL
-                    url_ext = os.path.splitext(cover_image_url)[1].lower()
-                    if url_ext in ['.jpg', '.jpeg']:
-                        image_filename = "cover.jpg"
-                    elif url_ext == '.png':
-                        image_filename = "cover.png"
-                    elif url_ext == '.gif':
-                         image_filename = "cover.gif"
-                    else:
-                        print("   WARNING: Could not determine cover image type from headers or URL. Defaulting to cover.jpg.")
+                actual_image_type = imghdr.what(None, h=image_content)
+                print(f"   Detected cover image type via imghdr: {actual_image_type}")
 
-                book.set_cover(image_filename, image_content) 
+                image_filename = None # Initialize image_filename
+
+                if actual_image_type:
+                    if actual_image_type == 'jpeg':
+                        image_filename = "cover.jpg"
+                    elif actual_image_type == 'png':
+                        image_filename = "cover.png"
+                    elif actual_image_type == 'gif':
+                        image_filename = "cover.gif"
+                    elif actual_image_type == 'webp':
+                        image_filename = "cover.webp"
+                        print(f"   WARNING: Cover image is WEBP, which might not be universally supported in EPUBs. Using extension .webp.")
+                    # Add other types if necessary, otherwise fallback will be used.
+                
+                # Fallback logic if imghdr doesn't recognize it or image_filename is still None
+                if image_filename is None:
+                    print(f"   imghdr did not identify the image type or it's an unsupported type. Falling back to Content-Type/URL.")
+                    content_type = response.headers.get('Content-Type')
+                    if content_type:
+                        if 'image/jpeg' in content_type:
+                            image_filename = "cover.jpg"
+                        elif 'image/png' in content_type:
+                            image_filename = "cover.png"
+                        elif 'image/gif' in content_type:
+                            image_filename = "cover.gif"
+                        elif 'image/webp' in content_type:
+                            image_filename = "cover.webp"
+                            # Warning for WEBP from Content-Type (if not already given by imghdr)
+                            if actual_image_type != 'webp': 
+                                print(f"   WARNING: Cover image is WEBP (Content-Type: {content_type}), which might not be universally supported. Using extension .webp.")
+                        else:
+                            print(f"   WARNING: Unknown cover image Content-Type '{content_type}'. Attempting URL extension.")
+                    
+                    if image_filename is None: # Still not determined, try URL extension
+                        url_ext = os.path.splitext(cover_image_url)[1].lower()
+                        if url_ext in ['.jpg', '.jpeg']:
+                            image_filename = "cover.jpg"
+                        elif url_ext == '.png':
+                            image_filename = "cover.png"
+                        elif url_ext == '.gif':
+                            image_filename = "cover.gif"
+                        elif url_ext == '.webp':
+                            image_filename = "cover.webp"
+                             # Warning for WEBP from URL (if not already given)
+                            if actual_image_type != 'webp' and (not content_type or 'image/webp' not in content_type):
+                                print(f"   WARNING: Cover image is WEBP (URL extension: {url_ext}), which might not be universally supported. Using extension .webp.")
+                        else:
+                            print(f"   WARNING: Could not determine cover image type from Content-Type or URL. Defaulting to cover.jpg.")
+                            image_filename = "cover.jpg" # Final default
+                
+                # Ensure image_filename is definitely set (should be redundant if logic above is complete)
+                if image_filename is None:
+                    print(f"   CRITICAL WARNING: image_filename was not set despite all checks. Defaulting to cover.jpg.")
+                    image_filename = "cover.jpg"
+
+                book.set_cover(image_filename, image_content)
                 print(f"   Cover image '{image_filename}' added to EPUB.")
 
             except requests.exceptions.RequestException as e_cover:
