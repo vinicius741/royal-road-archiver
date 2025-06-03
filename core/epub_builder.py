@@ -1,7 +1,8 @@
 # core/epub_builder.py
 import os
 import requests
-from ebooklib import epub
+import ebooklib # Added for ebooklib.ITEM_DOCUMENT
+from ebooklib import epub # For epub.EpubBook etc.
 from ebooklib.epub import read_epub, EpubHtml, EpubNav # Added EpubHtml, EpubNav here
 from bs4 import BeautifulSoup
 from typing import Optional, List # List is already here
@@ -54,7 +55,7 @@ def _load_chapter_content(file_path: str, chapter_title: str, chapter_uid: str) 
             title_tag = soup.new_tag('title')
             title_tag.string = chapter_title
             head.append(title_tag)
-
+        
         html_content = str(soup)
 
         # Create EpubHtml item
@@ -232,12 +233,12 @@ def build_epubs_for_story(
                 print(f"   Cover image '{image_filename}' added to EPUB.")
 
                 # Ensure cover.xhtml has the title "Cover"
-                for item in book.get_items_of_type(epub.ITEM_DOCUMENT):
+                for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT): # Changed to ebooklib.ITEM_DOCUMENT
                     if item.get_name() == 'cover.xhtml' or item.file_name == 'cover.xhtml': # Check both name and file_name for robustness
                         try:
                             cover_html_content = item.get_content().decode('utf-8')
                             cover_soup = BeautifulSoup(cover_html_content, 'html.parser')
-
+                            
                             head = cover_soup.find('head')
                             if not head:
                                 head = cover_soup.new_tag('head')
@@ -252,7 +253,7 @@ def build_epubs_for_story(
                             if not title_tag:
                                 title_tag = cover_soup.new_tag('title')
                                 head.append(title_tag)
-
+                            
                             title_tag.string = "Cover"
                             item.set_content(str(cover_soup).encode('utf-8'))
                             print(f"   Updated title for '{item.file_name}' to 'Cover'.")
@@ -417,7 +418,7 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
     """
     overall_modified_status = False # Tracks if any item in the book was changed
 
-    for item in book.get_items_of_type(epub.ITEM_DOCUMENT):
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT): # Changed to ebooklib.ITEM_DOCUMENT
         if not (item.get_name().lower().endswith(('.xhtml', '.html'))):
             continue
 
@@ -451,7 +452,7 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
 
 
             title_tag = head.find('title')
-
+            
             desired_title_text = ""
             # Check if it's cover.xhtml based on typical naming by ebooklib or common use
             # ebooklib's set_cover often names the XHTML file 'cover.xhtml' and gives it id 'cover'
@@ -472,7 +473,7 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
                     desired_title_text = ' '.join(word.capitalize() for word in processed_filename.split() if word)
                     if not desired_title_text: # Ultimate fallback
                         desired_title_text = "Untitled Document"
-
+            
             if not title_tag:
                 title_tag = soup.new_tag('title')
                 title_tag.string = desired_title_text

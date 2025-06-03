@@ -14,7 +14,7 @@ def create_basic_book():
     # Basic NAV document (NCX is usually added by ebooklib automatically on write)
     nav_doc = epub.EpubNav(uid='nav', file_name='nav.xhtml', title='Navigation')
     book.add_item(nav_doc)
-    book.spine = ['nav']
+    book.spine = ['nav'] 
     return book
 
 def test_fix_missing_titles():
@@ -36,7 +36,7 @@ def test_fix_missing_titles():
     chap_item2 = epub.EpubHtml(uid='c2', file_name='chap2.xhtml', title='None') # "None" should be overridden by filename
     chap_item2.content = '<html><head></head><body><h1>My Chapter 2</h1></body></html>'
     book.add_item(chap_item2)
-
+    
     # Chapter item with no item.title
     chap_item3 = epub.EpubHtml(uid='c3', file_name='chap_three_test.xhtml') # No item.title, should use filename
     chap_item3.content = '<html><head></head><body><h1>My Chapter 3</h1></body></html>'
@@ -44,7 +44,7 @@ def test_fix_missing_titles():
 
     # Update spine
     book.spine.extend([cover_item, chap_item1, chap_item2, chap_item3])
-
+    
     result = fix_xhtml_titles_in_epub(book)
     assert result is True, "fix_xhtml_titles_in_epub should return True as titles were modified"
 
@@ -72,7 +72,7 @@ def test_fix_missing_titles():
     assert chap2_soup.head is not None
     assert chap2_soup.head.title is not None
     assert chap2_soup.head.title.string == 'Chap2', "Chapter 2 title should be derived from filename 'chap2.xhtml'"
-
+    
     # Verify chapter 3 title (no item.title, uses filename)
     retrieved_chap3_item = book.get_item_with_id('c3')
     assert retrieved_chap3_item is not None
@@ -101,7 +101,7 @@ def test_titles_already_correct_and_some_needing_fix():
     chap_item2 = epub.EpubHtml(uid='c2', file_name='chap2.xhtml', title='Chapter Two Needs Fixing')
     chap_item2.content = '<html><head></head><body><h1>My Chapter 2</h1></body></html>' # No <title>
     book.add_item(chap_item2)
-
+    
     # Chapter item - Existing title is "None", should be fixed from filename
     chap_item3 = epub.EpubHtml(uid='c3', file_name='chap3_filename.xhtml', title='Another Chapter') # item.title is valid
     chap_item3.content = '<html><head><title>None</title></head><body><h1>My Chapter 3</h1></body></html>' # <title>None</title>
@@ -118,7 +118,7 @@ def test_titles_already_correct_and_some_needing_fix():
 
     chap1_soup = BeautifulSoup(book.get_item_with_id('c1').get_content().decode(), 'html.parser')
     assert chap1_soup.head.title.string == 'Chapter One'
-
+    
     chap2_soup = BeautifulSoup(book.get_item_with_id('c2').get_content().decode(), 'html.parser')
     assert chap2_soup.head.title.string == 'Chapter Two Needs Fixing' # Fixed from item.title
 
@@ -144,7 +144,7 @@ def test_no_changes_needed_all_correct():
     chap_item = epub.EpubHtml(uid='c1', file_name='chap1.xhtml', title='Chapter One')
     chap_item.content = '<html><head><title>Chapter One</title></head><body><h1>My Chapter</h1></body></html>'
     book.add_item(chap_item)
-
+    
     book.spine.extend([cover_item, chap_item])
 
     result = fix_xhtml_titles_in_epub(book)
@@ -168,7 +168,7 @@ def test_fix_item_with_no_head_tag():
     chap_no_head.content = '<html><body><h1>Chapter Lacking Head</h1></body></html>'
     book.add_item(chap_no_head)
     book.spine.append(chap_no_head)
-
+    
     result = fix_xhtml_titles_in_epub(book)
     assert result is True, "Should return True as item was modified to add head and title"
 
@@ -213,14 +213,14 @@ def test_non_html_item_is_skipped():
     book.add_item(css_item)
     # fix_xhtml_titles_in_epub filters by ITEM_DOCUMENT, so this might not even be seen.
     # If it did see it, it also filters by .xhtml/.html extension.
-
+    
     initial_content = css_item.get_content()
     result = fix_xhtml_titles_in_epub(book) # Should only process document items
-
+    
     # Assert that the function returns False if only non-HTML items or already correct HTML items are present
     # In this case, create_basic_book adds a nav.xhtml which *will* be processed.
     # So, let's check if this specific item was touched or if the result reflects changes elsewhere.
-
+    
     # To isolate, let's make a book with *only* a CSS item and see if it returns False
     isolated_book = epub.EpubBook()
     isolated_book.add_item(css_item)
@@ -234,7 +234,7 @@ def test_non_html_item_is_skipped():
     nav_doc.content = "<html><head></head><body><p>Nav content</p></body></html>" # No title tag
     book_with_nav_only.add_item(nav_doc)
     book_with_nav_only.spine = ['nav']
-
+    
     nav_result = fix_xhtml_titles_in_epub(book_with_nav_only)
     assert nav_result is True, "Should return True as nav.xhtml was modified"
     nav_soup = BeautifulSoup(book_with_nav_only.get_item_with_id('nav').get_content().decode(), 'html.parser')
