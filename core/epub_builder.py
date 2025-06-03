@@ -431,22 +431,46 @@ def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
             original_content = item.get_content().decode('utf-8', errors='ignore')
             soup = BeautifulSoup(original_content, 'html.parser')
 
+            # Ensure <html> tag has the correct XHTML namespace
+            html_tag = soup.find('html')
+            xhtml_namespace = "http://www.w3.org/1999/xhtml"
+            if html_tag:
+                original_xmlns = html_tag.get('xmlns')
+                if original_xmlns != xhtml_namespace:
+                    html_tag['xmlns'] = xhtml_namespace
+                    log_debug(f"  Ensured <html> tag has xmlns='{xhtml_namespace}' for {item.get_name()}. Was: '{original_xmlns}'")
+                    item_modified_this_iteration = True # Technically the soup is modified
+            else:
+                # This case is handled later when creating new_html_tag, but we log if no html tag is found initially.
+                log_debug(f"  No <html> tag initially found in {item.get_name()}. Will be handled if head/body are created from fragment.")
+
+
             head = soup.find('head')
             if not head:
                 log_debug(f"  No <head> tag found in {item.get_name()}. Creating one.")
                 head = soup.new_tag('head')
-                html_tag = soup.find('html')
-                if html_tag:
-                    html_tag.insert(0, head)
+
+                # Attempt to find or create html_tag again, as it might be a fragment
+                html_tag_for_head_insertion = soup.find('html') # Re-check for html tag
+                if html_tag_for_head_insertion:
+                    html_tag_for_head_insertion.insert(0, head)
                 else:
-                    log_warning(f"  No <html> tag found in {item.get_name()}! Attempting to add basic structure. This item might be malformed.")
+                    log_warning(f"  No <html> tag found in {item.get_name()} when trying to insert <head>! Attempting to add basic structure. This item might be malformed.")
                     new_html_tag = soup.new_tag('html')
+                    new_html_tag['xmlns'] = xhtml_namespace # Set namespace on newly created html tag
+                    log_debug(f"  Created new <html> tag with xmlns='{xhtml_namespace}' for {item.get_name()}.")
+
                     new_body_tag = soup.new_tag('body')
-                    new_html_tag.append(head)
+                    new_html_tag.append(head) # Add the created head
                     new_html_tag.append(new_body_tag)
-                    for child_content in list(soup.contents):
-                        new_body_tag.append(child_content.extract())
-                    soup.append(new_html_tag)
+
+                    # Move existing content (now presumed to be body content) into the new body tag
+                    for child_content in list(soup.contents): # Iterate over a copy for safe removal
+                        if child_content is not new_html_tag: # Avoid appending the tag to itself if it's already at top level
+                             new_body_tag.append(child_content.extract())
+
+                    soup.append(new_html_tag) # Append the new structure to the main soup
+                    item_modified_this_iteration = True # Structure was significantly changed
 
             title_tag = head.find('title')
             current_title_str = title_tag.string if title_tag and title_tag.string else "None"
