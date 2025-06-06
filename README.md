@@ -187,6 +187,25 @@ python main.py <command> --help
         ]
         ```
 
+-   **`fix-epub-titles`**: Scans and fixes `<title>` tags in EPUBs.
+    ```bash
+    python main.py fix-epub-titles <FOLDER_PATH>
+    ```
+    -   `<FOLDER_PATH>`: Path to a folder containing EPUB files. The command searches recursively through subdirectories.
+    -   **Functionality**: For each `.epub` file found, this command inspects its internal XHTML components (like chapters, cover pages, etc.). It ensures that each XHTML file has a valid `<title>` tag within its `<head>` section.
+        -   For `cover.xhtml`, the title is set to "Cover".
+        -   For other XHTML files, it attempts to use the title from the EPUB's manifest for that item. If that's not suitable (e.g., "None", "Untitled"), it generates a title from the XHTML filename.
+    -   **Important**: This command directly modifies and overwrites the original EPUB files in place.
+    -   **Example Usages**:
+        -   To fix EPUBs within a specific story's output folder:
+            ```bash
+            python main.py fix-epub-titles epubs/my-story-slug/
+            ```
+        -   To fix all EPUBs located anywhere under the general `epubs/` directory:
+            ```bash
+            python main.py fix-epub-titles epubs/
+            ```
+
 ### Examples:
 
 1.  **Full process for a story from its overview page, using fetched metadata for EPUB:**

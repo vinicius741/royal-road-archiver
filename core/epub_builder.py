@@ -1,11 +1,13 @@
 # core/epub_builder.py
 import os
 import requests
-from ebooklib import epub
+import ebooklib # Added for ebooklib.ITEM_DOCUMENT
+from ebooklib import epub # For epub.EpubBook etc.
 from ebooklib.epub import read_epub, EpubHtml, EpubNav # Added EpubHtml, EpubNav here
 from bs4 import BeautifulSoup
 from typing import Optional, List # List is already here
 from core.processor import remove_sentences_from_html_content # Added this import
+from core.logging_utils import log_debug, log_warning # Added for enhanced fix_xhtml_titles_in_epub
 import re
 import uuid  # For unique identifiers
 import datetime  # For publication date metadata
@@ -32,6 +34,30 @@ def _load_chapter_content(file_path: str, chapter_title: str, chapter_uid: str) 
         if not html_content.strip():
             print(f"   WARNING: Chapter file {file_path} is empty and will be skipped.")
             return None
+
+        # Ensure the chapter has a <title> tag
+        soup = BeautifulSoup(html_content, 'html.parser')
+        head = soup.find('head')
+        if not head:
+            head = soup.new_tag('head')
+            if soup.html:
+                soup.html.insert(0, head)
+            else:
+                # If no <html> tag, we are dealing with a fragment.
+                # This case should ideally not happen for full XHTML documents.
+                # However, to be robust, we can wrap the content in html if needed,
+                # or decide that title injection isn't possible/meaningful here.
+                # For now, let's assume an <html> tag is present or bs4 handles it.
+                # If not, head might not be properly attached.
+                # A more robust solution for fragments might be needed if they are common.
+                pass # Or handle fragment case explicitly
+
+        if head and not head.find('title'):
+            title_tag = soup.new_tag('title')
+            title_tag.string = chapter_title
+            head.append(title_tag)
+
+        html_content = str(soup)
 
         # Create EpubHtml item
         chapter_item = epub.EpubHtml(
@@ -207,6 +233,35 @@ def build_epubs_for_story(
                 book.set_cover(image_filename, image_content) 
                 print(f"   Cover image '{image_filename}' added to EPUB.")
 
+                # Ensure cover.xhtml has the title "Cover"
+                for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT): # Changed to ebooklib.ITEM_DOCUMENT
+                    if item.get_name() == 'cover.xhtml' or item.file_name == 'cover.xhtml': # Check both name and file_name for robustness
+                        try:
+                            cover_html_content = item.get_content().decode('utf-8')
+                            cover_soup = BeautifulSoup(cover_html_content, 'html.parser')
+
+                            head = cover_soup.find('head')
+                            if not head:
+                                head = cover_soup.new_tag('head')
+                                # Try to insert it into <html>, or at the beginning if no <html>
+                                html_tag = cover_soup.find('html')
+                                if html_tag:
+                                    html_tag.insert(0, head)
+                                else:
+                                    cover_soup.insert(0, head)
+
+                            title_tag = head.find('title')
+                            if not title_tag:
+                                title_tag = cover_soup.new_tag('title')
+                                head.append(title_tag)
+
+                            title_tag.string = "Cover"
+                            item.set_content(str(cover_soup).encode('utf-8'))
+                            print(f"   Updated title for '{item.file_name}' to 'Cover'.")
+                        except Exception as e_cover_title:
+                            print(f"   WARNING: Could not update title for cover.xhtml: {e_cover_title}")
+                        break # Found and processed cover.xhtml, no need to continue loop
+
             except requests.exceptions.RequestException as e_cover:
                 print(f"   WARNING: Failed to download cover image from {cover_image_url}: {e_cover}")
             except Exception as e_cover_generic:
@@ -345,3 +400,456 @@ def modify_epub_content(epub_path: str, sentences_to_remove: List[str]):
             #         print(f"Error restoring backup for {epub_path}: {re}")
     else:
         print(f"No changes made to EPUB: {epub_path}")
+
+
+def fix_xhtml_titles_in_epub(book: epub.EpubBook) -> bool:
+    """
+    Scans all XHTML items in an EpubBook and ensures they have a <title> tag
+    in their <head> section.
+
+    For chapter files, it tries to use the item's manifest title if available and sensible,
+    otherwise generates a title from the filename.
+    For 'cover.xhtml', it sets the title to 'Cover'.
+
+    Args:
+        book: The ebooklib.epub.EpubBook object to modify.
+
+    Returns:
+        True if any modifications were made to the book's items, False otherwise.
+    """
+    overall_modified_status = False
+    log_debug(f"Starting fix_xhtml_titles_in_epub for book with main title (from OPF): {book.title}")
+
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+        if not (item.get_name().lower().endswith(('.xhtml', '.html'))):
+            log_debug(f"Skipping non-XHTML/HTML item: {item.get_name()} (Type: {item.get_type()})")
+            continue
+
+        # Temporarily comment out skipping cover.xhtml to test new string logic on it
+        # if item.get_name().lower() == 'cover.xhtml':
+        #     log_debug(f"Skipping title processing for cover.xhtml item: {item.get_name()}")
+        #     continue
+
+        log_debug(f"Processing item with STRING OPS: {item.get_name()} (ID: {item.id}, Type: {item.get_type()})")
+        item_modified_this_iteration = False # Renamed from made_change_by_str_manip for consistency
+
+        try:
+            item_content_str = item.get_content().decode('utf-8', errors='ignore')
+            modified_content_str = item_content_str
+
+            # --- Determine desired_title_text (reusing existing logic) ---
+            desired_title_text = ""
+            # Specific logic for cover page title
+            if item.get_name().lower() == 'cover.xhtml': # Check filename for cover
+                desired_title_text = "Cover"
+                log_debug(f"  Identified as cover page by name. Desired HTML <title>: '{desired_title_text}'")
+            elif item.id.lower() == 'cover': # Check item ID for cover (common for programmatically added covers)
+                desired_title_text = "Cover"
+                log_debug(f"  Identified as cover page by ID. Desired HTML <title>: '{desired_title_text}'")
+            else:
+                # Generic logic for other items
+                if hasattr(item, 'title') and item.title and item.title.strip().lower() not in ['none', 'untitled', '']:
+                    desired_title_text = item.title.strip()
+                    log_debug(f"  Using item manifest (OPF/NCX) title for HTML <title>. Desired: '{desired_title_text}' for {item.get_name()}")
+                else:
+                    log_debug(f"  Manifest (OPF/NCX) title is absent or generic for {item.get_name()}. Deriving from filename.")
+                    filename_sans_ext = os.path.splitext(item.get_name())[0]
+                    processed_filename = filename_sans_ext.replace('_', ' ').replace('-', ' ')
+                    desired_title_text = ' '.join(word.capitalize() for word in processed_filename.split() if word)
+                    if not desired_title_text:
+                        desired_title_text = "Untitled Document" # Changed from "Untitled Content" for consistency
+                    log_debug(f"  Derived HTML <title> from filename: '{desired_title_text}' for {item.get_name()}")
+
+            if not desired_title_text.strip(): # Final fallback, though less likely now
+                desired_title_text = "Untitled Document"
+                log_warning(f"  Desired title for {item.get_name()} was empty or whitespace after all checks. Corrected to fallback: '{desired_title_text}'")
+
+            import html
+            escaped_desired_title_text = html.escape(desired_title_text)
+            temp_title_placeholder = "___TEMP_TITLE_PLACEHOLDER___"
+            head_with_temp_title_payload = f"<title>{temp_title_placeholder}</title>" # Just the title tag with placeholder
+
+            # --- String manipulation logic ---
+            next_content_str = modified_content_str
+
+            # Case 1: <head/> (self-closing, possibly with spaces and attributes)
+            # Replaces <head .../> with <head ...><title>PLACEHOLDER</title></head>
+            # Captures attributes in group 1 to preserve them.
+            def replace_self_closing_head(match):
+                attrs = match.group(1) if match.group(1) else ""
+                return f"<head{attrs}>{head_with_temp_title_payload}</head>"
+
+            next_content_str = re.sub(r"<head(\s*[^>]*)/>", replace_self_closing_head, modified_content_str, count=1, flags=re.IGNORECASE)
+            if next_content_str != modified_content_str:
+                modified_content_str = next_content_str
+                item_modified_this_iteration = True
+                log_debug(f"  String Case 1: Replaced self-closing <head/> for {item.get_name()}")
+
+            # Case 2: <head></head> (empty head tags)
+            # Replaces <head></head> with <head><title>PLACEHOLDER</title></head>
+            # Also handles <head attributes></head attributes>
+            if not item_modified_this_iteration:
+                def replace_empty_head(match):
+                    attrs = match.group(1) if match.group(1) else ""
+                    return f"<head{attrs}>{head_with_temp_title_payload}</head>"
+
+                next_content_str = re.sub(r"<head(\s*[^>]*)>\s*</head\s*>", replace_empty_head, modified_content_str, count=1, flags=re.IGNORECASE)
+                if next_content_str != modified_content_str:
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True
+                    log_debug(f"  String Case 2: Replaced empty <head></head> for {item.get_name()}")
+
+            # Case 3: <head><title>...</title></head> (existing title, update it)
+            if not item_modified_this_iteration:
+                def replace_existing_title(match):
+                    head_attrs = match.group(1) if match.group(1) else ""
+                    content_before_title = match.group(2) if match.group(2) else ""
+                    content_after_title = match.group(4) if match.group(4) else ""
+                    # Check if the existing title is already the desired one (after placeholder substitution)
+                    # This check is somewhat redundant if the final replacement of placeholder handles it,
+                    # but can prevent unnecessary flagging of modification if old_title_content was already desired_title_text
+                    old_title_content = match.group(3)
+                    if html.unescape(old_title_content) == desired_title_text: # Compare unescaped existing to unescaped desired
+                         # No change needed if title content is already correct (ignoring placeholder for now)
+                         # We must return the original full match to signal no change to re.sub
+                         # However, re.sub will report a change if the string differs even if semantically same.
+                         # For simplicity, always replace with placeholder, then check content at the end.
+                         pass # Fallthrough to replace with placeholder.
+
+                    return f"<head{head_attrs}>{content_before_title}<title>{temp_title_placeholder}</title>{content_after_title}</head>"
+
+                # Pattern: <head(attributes)>(anything before title)<title>(old_title_content)</title>(anything after title)</head>
+                # Using DOTALL for content that might span newlines. Non-greedy match for content.
+                next_content_str = re.sub(r"<head([^>]*)>\s*(.*?)\s*<title>(.*?)</title>\s*(.*?)\s*</head>",
+                                          replace_existing_title,
+                                          modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+                if next_content_str != modified_content_str: # This means regex made a structural replacement
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True # Flag that a replacement happened
+                    log_debug(f"  String Case 3: Existing <title> structure found and replaced with placeholder for {item.get_name()}")
+                elif temp_title_placeholder not in next_content_str and re.search(r"<head[^>]*>.*?<title>.*?</title>.*?</head>", modified_content_str, flags=re.IGNORECASE | re.DOTALL):
+                    # This case means re.sub didn't change the string because the replace_existing_title returned the original match
+                    # (e.g. if we had a more complex check there).
+                    # However, we still need to check if the *content* of the title needs updating.
+                    # This part is complex. Let's simplify: if Case 3's regex matches, we assume a title exists.
+                    # We'll replace the placeholder later. If the title content was already correct, the final string won't change.
+                    # The item_modified_this_iteration is primarily for structural changes or if title content changes.
+                    # A simpler check: if the regex matches but string is same, the title content might need updating.
+                    # This is handled by the final placeholder replacement and comparison.
+                    pass
+
+
+            # Case 4: <head> without <title> but possibly other content
+            if not item_modified_this_iteration:
+                def add_title_to_existing_head(match):
+                    head_attrs = match.group(1) if match.group(1) else ""
+                    head_content = match.group(2) if match.group(2) else ""
+                    # Defensive check: if a title somehow exists (e.g. partial match from other cases), don't add another
+                    if re.search(r"<title\s*>", head_content, flags=re.IGNORECASE):
+                        return match.group(0) # Return original match if title already present
+                    return f"<head{head_attrs}>{head_with_temp_title_payload}{head_content}</head>"
+
+                # Pattern: <head (attributes)> (content) </head>
+                # This should only apply if previous cases (which are more specific for title presence) didn't match.
+                next_content_str = re.sub(r"<head([^>]*)>(.*?)</head>",
+                                          add_title_to_existing_head,
+                                          modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+                if next_content_str != modified_content_str and temp_title_placeholder in next_content_str:
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True
+                    log_debug(f"  String Case 4: Added <title> to existing non-empty <head> for {item.get_name()}")
+
+            # Case 5: No <head> tag at all. Add <head><title>...</title></head> after <html> tag.
+            # This check should run regardless of item_modified_this_iteration from previous steps,
+            # but only if a head tag wasn't effectively created/populated by previous steps.
+            # A simple check is if temp_title_placeholder is already in modified_content_str.
+            if temp_title_placeholder not in modified_content_str and not re.search(r"<head\s*>", modified_content_str, flags=re.IGNORECASE):
+                def insert_head_after_html_tag(match_obj):
+                    html_attributes = match_obj.group(1) if match_obj.group(1) else ""
+                    # Construct new head with title placeholder
+                    new_head_with_title = f"<head><title>{temp_title_placeholder}</title></head>"
+                    return f"<html{html_attributes}>{new_head_with_title}"
+
+                next_content_str = re.sub(r"<html([^>]*)>", insert_head_after_html_tag, modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+                if next_content_str != modified_content_str:
+                    modified_content_str = next_content_str
+                    item_modified_this_iteration = True
+                    log_debug(f"  String Case 5: Added new <head> with <title> for {item.get_name()} (no head was present).")
+
+            # After all regex attempts, if a placeholder was inserted, replace it with the actual desired title.
+            if temp_title_placeholder in modified_content_str:
+                final_replaced_content_str = modified_content_str.replace(temp_title_placeholder, escaped_desired_title_text)
+                # Only flag as modified if the final content (with real title) is different from original
+                # OR if item_modified_this_iteration was already true (structural change)
+                if final_replaced_content_str != item_content_str:
+                    item_modified_this_iteration = True
+                    log_debug(f"  Final title for {item.get_name()}: '{desired_title_text}' (escaped: '{escaped_desired_title_text}')")
+                modified_content_str = final_replaced_content_str
+
+            # Ensure XHTML namespace on html tag (can be done with regex too, or kept from BS4 logic if simpler)
+            # For string manipulation, this is more complex if <html> itself is missing.
+            # Assuming <html> tag exists based on typical XHTML structure.
+            if not re.search(r'<html[^>]*xmlns\s*=\s*["\']http://www.w3.org/1999/xhtml["\']', modified_content_str, flags=re.IGNORECASE):
+                def add_xhtml_namespace(match_obj):
+                    current_attrs = match_obj.group(1)
+                    if 'xmlns=' in current_attrs: # If xmlns is there but different, replace (complex) or just log. For now, just add if totally missing.
+                        return match_obj.group(0) # Don't change if xmlns present, even if wrong, for simplicity here.
+                    return f"<html{current_attrs} xmlns=\"http://www.w3.org/1999/xhtml\""
+
+                next_content_str = re.sub(r"<html([^>]*)>", add_xhtml_namespace, modified_content_str, count=1, flags=re.IGNORECASE)
+                if next_content_str != modified_content_str:
+                     modified_content_str = next_content_str
+                     item_modified_this_iteration = True # This is a modification
+                     log_debug(f"  String Ensure XHTML namespace: Added xmlns attribute for {item.get_name()}")
+
+
+            # Update item content if modified
+            if item_modified_this_iteration:
+                # Conditional print for chap1.xhtml (as requested for debugging)
+                if item.get_name().lower() == 'chap1.xhtml':
+                    print(f"DEBUG_JULES: Final content for chap1.xhtml before set_content: {modified_content_str}")
+
+                item.content = modified_content_str.encode('utf-8') # Use direct assignment as per prompt example
+                overall_modified_status = True
+                log_debug(f"  Item '{item.get_name()}' content was MODIFIED by string ops and updated.")
+            else:
+                log_debug(f"  No modifications to HTML content for item '{item.get_name()}'.")
+
+        except Exception as e:
+            log_warning(f"  ERROR processing item {item.get_name()} in fix_xhtml_titles_in_epub: {e}")
+            # import traceback # Consider adding for very detailed debugging if needed by user
+            # log_debug(traceback.format_exc())
+
+    log_debug(f"Finished fix_xhtml_titles_in_epub for book. Overall modified status: {overall_modified_status}")
+    return overall_modified_status
+
+
+def modify_xhtml_string_for_head_and_title(xhtml_content_str: str, desired_title: str) -> tuple[str, bool]:
+    """
+    Modifies an XHTML content string to ensure it has a <head> and <title> tag,
+    with the title content set to the desired_title.
+    Uses string manipulation with regular expressions.
+
+    Args:
+        xhtml_content_str: The original XHTML content as a string.
+        desired_title: The desired raw title string (will be HTML-escaped).
+
+    Returns:
+        A tuple: (modified_xhtml_content_str, was_modified_flag).
+    """
+    original_input_str = xhtml_content_str # Keep a copy of the absolute original for final comparison
+    modified_content_str = xhtml_content_str
+    # made_change_structurally tracks if regexes for head/title structure were applied.
+    # The final was_modified_flag will be based on overall string comparison.
+    made_change_structurally = False
+
+    if not desired_title: # Fallback for empty desired_title
+        desired_title = "Untitled Document"
+        # Use log_warning from the correct import at the top of the file
+        # from core.logging_utils import log_warning
+        log_warning(f"  modify_xhtml_string_for_head_and_title received empty desired_title for a document, using 'Untitled Document'.")
+
+    import html # Ensure html module is imported for escaping
+    escaped_desired_title = html.escape(desired_title)
+    temp_title_placeholder = "___TEMP_TITLE_PLACEHOLDER___"
+
+    head_with_title_placeholder_minimal = f"<head><title>{temp_title_placeholder}</title></head>"
+
+    # 1. Ensure XHTML Namespace on <html> tag
+    # Using a two-step approach for robustness as discussed in the prompt.
+    html_tag_match = re.search(r"<html[^>]*>", modified_content_str, flags=re.IGNORECASE)
+    if html_tag_match:
+        current_html_tag = html_tag_match.group(0)
+        new_html_tag = current_html_tag
+        # Check if the correct xmlns is already present (case-insensitive for attribute name, sensitive for value)
+        if not re.search(r'xmlns\s*=\s*["\']http://www.w3.org/1999/xhtml["\']', current_html_tag):
+            if 'xmlns=' in current_html_tag.lower(): # Check if any xmlns is present
+                # Replace existing xmlns attribute
+                new_html_tag = re.sub(r'xmlns\s*=\s*["\'][^"\']*["\']', 'xmlns="http://www.w3.org/1999/xhtml"', current_html_tag, count=1, flags=re.IGNORECASE)
+            else:
+                # Add xmlns attribute
+                new_html_tag = current_html_tag[:-1] + ' xmlns="http://www.w3.org/1999/xhtml">'
+
+            if new_html_tag != current_html_tag:
+                # Replace the old html tag with the new one in the whole document string
+                # This assumes the first <html> tag is the one to change.
+                modified_content_str = modified_content_str.replace(current_html_tag, new_html_tag, 1)
+                # This change will be caught by the final comparison: (modified_content_str != original_input_str)
+                log_debug("  String Ensure: Added/corrected XHTML namespace on <html> tag.")
+    else:
+        log_warning("  No <html> tag found. Cannot ensure XHTML namespace.")
+
+
+    # --- Head and Title Manipulation ---
+
+    # Case 1: <head .../> (self-closing, possibly with spaces and attributes)
+    def replace_self_closing_head_with_title(match):
+        attrs = match.group(1) if match.group(1) else ""
+        # Preserve attributes correctly
+        return f"<head{attrs}><title>{temp_title_placeholder}</title></head>"
+
+    next_content = re.sub(r"<head(\s*[^>]*)/>", replace_self_closing_head_with_title, modified_content_str, count=1, flags=re.IGNORECASE)
+    if next_content != modified_content_str:
+        modified_content_str = next_content
+        made_change_structurally = True
+        log_debug("  String Case 1: Replaced self-closing <head/>.")
+
+    # Case 2: <head ...></head> (empty or whitespace-only content)
+    if not made_change_structurally:
+        def replace_empty_head_with_title(match):
+            attrs = match.group(1) if match.group(1) else ""
+            return f"<head{attrs}><title>{temp_title_placeholder}</title></head>"
+
+        next_content = re.sub(r"<head(\s*[^>]*)>\s*</head\s*>", replace_empty_head_with_title, modified_content_str, count=1, flags=re.IGNORECASE)
+        if next_content != modified_content_str:
+            modified_content_str = next_content
+            made_change_structurally = True
+            log_debug("  String Case 2: Replaced empty <head></head>.")
+
+    # Case 3: <head ...><title>...</title>...</head> (existing title, update it)
+    if not made_change_structurally:
+        def replace_title_in_head_content(match):
+            head_attrs = match.group(1) if match.group(1) else ""
+            content_before_title = match.group(2) if match.group(2) else ""
+            content_after_title = match.group(4) if match.group(4) else ""
+            return f"<head{head_attrs}>{content_before_title}<title>{temp_title_placeholder}</title>{content_after_title}</head>"
+
+        next_content = re.sub(r"<head([^>]*)>\s*(.*?)\s*<title>.*?</title>\s*(.*?)\s*</head>",
+                              replace_title_in_head_content,
+                              modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+        if next_content != modified_content_str:
+            modified_content_str = next_content
+            made_change_structurally = True
+            log_debug("  String Case 3: Updated existing <title> in <head> (placeholder inserted).")
+
+    # Case 4: <head ...>NO_TITLE_HERE</head> (head exists, no title, possibly other content)
+    if not made_change_structurally:
+        def add_title_to_head_content(match):
+            head_attrs = match.group(1) if match.group(1) else ""
+            head_content = match.group(2) if match.group(2) else ""
+            if re.search(r"<title\s*>", head_content, flags=re.IGNORECASE): # Check if title somehow exists
+                return match.group(0)
+            return f"<head{head_attrs}><title>{temp_title_placeholder}</title>{head_content}</head>"
+
+        next_content = re.sub(r"<head([^>]*)>(.*?)</head>",
+                              add_title_to_head_content,
+                              modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+        if next_content != modified_content_str and temp_title_placeholder in next_content:
+            modified_content_str = next_content
+            made_change_structurally = True
+            log_debug("  String Case 4: Added <title> to existing <head> with other content.")
+
+    # Case 5: No <head> tag at all. Add <head><title>...</title></head> after opening <html> tag.
+    if not made_change_structurally and not re.search(r"<head\s*>", modified_content_str, flags=re.IGNORECASE):
+        def insert_head_after_html_tag(match):
+            html_tag_and_attrs = match.group(1)
+            return f"{html_tag_and_attrs}{head_with_title_placeholder_minimal}"
+
+        next_content = re.sub(r"(<html[^>]*>)", insert_head_after_html_tag, modified_content_str, count=1, flags=re.IGNORECASE | re.DOTALL)
+        if next_content != modified_content_str:
+            modified_content_str = next_content
+            made_change_structurally = True
+            log_debug("  String Case 5: Added new <head> with <title> (no <head> was present).")
+
+    # Final title replacement
+    if temp_title_placeholder in modified_content_str:
+        modified_content_str = modified_content_str.replace(temp_title_placeholder, escaped_desired_title)
+        # If made_change_structurally was already true, this step is part of that change.
+        # If made_change_structurally was false, but placeholder is present (e.g. error in logic above),
+        # and replacing it changes content, this should also be a change.
+        # The final comparison to original_input_str will determine the ultimate 'was_modified_flag'.
+        log_debug(f"  Replaced placeholder with actual title: '{escaped_desired_title}'")
+
+    was_modified_flag = (modified_content_str != original_input_str)
+    if was_modified_flag:
+        log_debug(f"  Content was modified overall by string operations. Final title: '{desired_title}'")
+    # else:
+        # log_debug(f"  Content was NOT modified overall by string operations. Desired title was '{desired_title}'.")
+
+    return modified_content_str, was_modified_flag
+
+
+def get_xhtml_files_and_titles_from_epub(epub_path: str) -> list[tuple[str, str, str | None]]:
+    """
+    Reads an EPUB file and extracts information about its XHTML/HTML documents,
+    including their filepaths within the archive, desired HTML titles, and item IDs.
+
+    The desired HTML title is determined based on:
+    1. Being "Cover" if the filename is 'cover.xhtml'.
+    2. The item's manifest title (item.title) if available and not generic.
+    3. A title derived from the filename if the manifest title is unsuitable.
+    4. "Untitled Document" as a final fallback.
+
+    Args:
+        epub_path: The path to the EPUB file.
+
+    Returns:
+        A list of tuples, where each tuple contains:
+        (filepath_in_archive: str, desired_html_title: str, item_id: str | None).
+        Returns an empty list if the EPUB cannot be read or contains no XHTML documents.
+    """
+    xhtml_data_list = []
+
+    if not os.path.exists(epub_path):
+        log_error(f"EPUB file not found at: {epub_path}")
+        return xhtml_data_list
+
+    try:
+        log_debug(f"Reading EPUB file: {epub_path}")
+        book = epub.read_epub(epub_path)
+    except Exception as e:
+        log_error(f"Error reading EPUB file {epub_path}: {e}")
+        # Depending on desired behavior, could re-raise or return empty:
+        # raise # Re-raises the caught exception
+        return xhtml_data_list
+
+    log_debug(f"Successfully read EPUB. Processing items...")
+    for item in book.get_items():
+        if item.get_type() == ebooklib.ITEM_DOCUMENT and \
+           item.get_name().lower().endswith(('.xhtml', '.html')):
+
+            filepath_in_archive = item.get_name()
+            item_id = getattr(item, 'id', None) # Safely get item.id
+            desired_html_title = ""
+
+            log_debug(f"  Processing document item: ID='{item_id}', Name='{filepath_in_archive}'")
+
+            # Determine desired_html_title
+            if filepath_in_archive.lower() == 'cover.xhtml':
+                desired_html_title = "Cover"
+                log_debug(f"    Item identified as cover. Desired title: '{desired_html_title}'")
+            else:
+                manifest_title = getattr(item, 'title', None)
+                if manifest_title and manifest_title.strip().lower() not in ['', 'none', 'untitled']:
+                    desired_html_title = manifest_title.strip()
+                    log_debug(f"    Using manifest title: '{desired_html_title}' (from item.title: '{manifest_title}')")
+                else:
+                    if manifest_title:
+                        log_debug(f"    Manifest title '{manifest_title}' is unsuitable. Deriving from filename.")
+                    else:
+                        log_debug(f"    No manifest title. Deriving from filename.")
+
+                    filename_sans_ext = os.path.splitext(filepath_in_archive)[0]
+                    # Basic processing: replace underscores/hyphens with spaces, then capitalize words
+                    processed_filename = filename_sans_ext.replace('_', ' ').replace('-', ' ')
+                    title_words = [word.capitalize() for word in processed_filename.split() if word]
+                    derived_title = ' '.join(title_words)
+
+                    if derived_title:
+                        desired_html_title = derived_title
+                        log_debug(f"    Derived title from filename: '{desired_html_title}'")
+                    else:
+                        # This case should be rare if filename is not empty/just symbols
+                        desired_html_title = "Untitled Document"
+                        log_debug(f"    Filename derivation resulted in empty title. Using fallback: '{desired_html_title}'")
+
+            # Final fallback if somehow still empty (e.g. if cover logic was more complex and failed)
+            if not desired_html_title.strip():
+                desired_html_title = "Untitled Document"
+                log_warning(f"    Title for '{filepath_in_archive}' was empty after all checks. Using fallback: '{desired_html_title}'")
+
+            xhtml_data_list.append((filepath_in_archive, desired_html_title, item_id))
+            log_debug(f"    Appended to list: ('{filepath_in_archive}', '{desired_html_title}', '{item_id}')")
+
+    log_debug(f"Finished processing. Found {len(xhtml_data_list)} XHTML/HTML documents.")
+    return xhtml_data_list
